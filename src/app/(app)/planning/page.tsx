@@ -24,7 +24,9 @@ import {
   Clock,
   Layers,
 } from "lucide-react";
-import * as XLSX from "xlsx";
+// XLSX lazy import — sadece "Excel İndir" butonuna basınca yüklenir (~400 KB tasarruf).
+// İlk render bundle'ı küçülür.
+import type * as XLSXType from "xlsx";
 import {
   useStore,
   useCurrentProject,
@@ -54,16 +56,21 @@ import {
 } from "@/lib/calc/predecessors";
 import { endDateFromDuration, workingDates, startDateFromDuration } from "@/lib/calc/distribution";
 import type { PredecessorType, PredecessorLink, WbsItem } from "@/lib/store/types";
-import { PlanWizard } from "@/components/planning/plan-wizard";
-import { CleanupDialog, type CleanupOptions } from "@/components/planning/cleanup-dialog";
+import dynamic from "next/dynamic";
+import { type CleanupOptions } from "@/components/planning/cleanup-dialog";
 import { PredecessorBadges } from "@/components/planning/predecessor-badges";
 import { PredecessorQuickAdd } from "@/components/planning/predecessor-quick-add";
 import { ShortcutsHint } from "@/components/planning/shortcuts-hint";
-import { MiniGantt } from "@/components/planning/mini-gantt";
-import { WhatIfDialog } from "@/components/planning/whatif-dialog";
-import { DurationInputDialog } from "@/components/planning/duration-input-dialog";
-import { BulkDistributeDialog } from "@/components/planning/bulk-distribute-dialog";
-import { AlapSelectDialog } from "@/components/planning/alap-select-dialog";
+
+// Büyük dialog'lar ve mini-gantt — lazy load. Sadece açıldığında / render
+// edildiğinde yüklenirler. Planning sayfasının ilk-render bundle'ı ~150 KB azalır.
+const PlanWizard = dynamic(() => import("@/components/planning/plan-wizard").then(m => ({ default: m.PlanWizard })), { ssr: false });
+const CleanupDialog = dynamic(() => import("@/components/planning/cleanup-dialog").then(m => ({ default: m.CleanupDialog })), { ssr: false });
+const MiniGantt = dynamic(() => import("@/components/planning/mini-gantt").then(m => ({ default: m.MiniGantt })), { ssr: false });
+const WhatIfDialog = dynamic(() => import("@/components/planning/whatif-dialog").then(m => ({ default: m.WhatIfDialog })), { ssr: false });
+const DurationInputDialog = dynamic(() => import("@/components/planning/duration-input-dialog").then(m => ({ default: m.DurationInputDialog })), { ssr: false });
+const BulkDistributeDialog = dynamic(() => import("@/components/planning/bulk-distribute-dialog").then(m => ({ default: m.BulkDistributeDialog })), { ssr: false });
+const AlapSelectDialog = dynamic(() => import("@/components/planning/alap-select-dialog").then(m => ({ default: m.AlapSelectDialog })), { ssr: false });
 import { Badge } from "@/components/ui/badge";
 import { MultiSelectFilter } from "@/components/ui/multi-select-filter";
 
@@ -730,8 +737,9 @@ export default function PlanningPage() {
   }
 
   // EXCEL plan indir — wide format (leaf × tarih matrisi). Düzgün başlıklı, totalli.
-  function downloadExcelTemplate() {
+  async function downloadExcelTemplate() {
     if (!project) return;
+    const XLSX = await import("xlsx");
     const DAY_TR_SHORT = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
     const MONTH_TR_SHORT = [
       "Oca", "Şub", "Mar", "Nis", "May", "Haz",
@@ -867,7 +875,7 @@ export default function PlanningPage() {
     ws["!views"] = [{ state: "frozen", xSplit: 7, ySplit: 2 }];
 
     // Ay başlıklarını yatayda birleştir (her ay grup için)
-    const merges: XLSX.Range[] = [];
+    const merges: XLSXType.Range[] = [];
     {
       const META_COLS = 7;
       let groupStart = META_COLS;

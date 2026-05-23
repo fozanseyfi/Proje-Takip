@@ -518,6 +518,7 @@ export default function PersonnelAttendancePage() {
                                 <input
                                   type="number"
                                   step="0.5"
+                                  inputMode="decimal"
                                   value={d.hours}
                                   onChange={(e) => setHours(p.id, Number(e.target.value) || 0)}
                                   disabled={isLocked}
@@ -545,13 +546,38 @@ export default function PersonnelAttendancePage() {
       )}
 
       {assignedPersonnel.length > 5 && (
-        <Alert variant="info" className="mt-4">
+        <Alert variant="info" className="mt-4 mb-32 md:mb-4">
           Tip: Tüm personel varsayılan <strong>gelmedi</strong>. Sahaya gelen personelin
           kartına tıkla → çalıştı (8 saat). Raporluysa sağdaki <strong>R</strong> butonuna bas.
           Listede sadece o gün <em>işe giriş–çıkış</em> ve <em>atama</em> tarihleri içinde olan
           personel görünür. Bitiminde <strong>Kaydet</strong>.
         </Alert>
       )}
+
+      {/* MOBILE: Sticky bottom action bar */}
+      <div
+        className="md:hidden fixed left-0 right-0 z-30 bg-white/95 backdrop-blur-xl border-t border-border px-3 py-2 shadow-large"
+        style={{
+          bottom: "calc(64px + env(safe-area-inset-bottom, 0px))",
+        }}
+      >
+        {isLocked ? (
+          <button
+            onClick={unlock}
+            className="w-full h-12 rounded-lg bg-white border border-yellow text-yellow-dark flex items-center justify-center gap-2 font-bold text-sm active:scale-95 transition-all"
+          >
+            <Unlock size={16} />
+            Kilidi Aç
+          </button>
+        ) : (
+          <button
+            onClick={save}
+            className="w-full h-12 rounded-lg bg-accent text-white flex items-center justify-center gap-2 font-bold text-sm shadow-medium active:scale-95 transition-all"
+          >
+            Kaydet · {totalWorkedCount}/{allAssigned.length} çalıştı
+          </button>
+        )}
+      </div>
     </>
   );
 }

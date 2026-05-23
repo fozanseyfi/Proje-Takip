@@ -482,7 +482,159 @@ export default function RealizationPage() {
         <span className="text-[10px] font-mono text-text3">{visibleRows.length} satır</span>
       </div>
 
-      <Card className="!p-0 overflow-hidden">
+      {/* ═══════ MOBILE: Card-based list (md altı) ═══════ */}
+      <div className="md:hidden space-y-2 pb-32">
+        {visibleRows.filter((r) => r.item.isLeaf).map((r) => {
+          const w = r.item;
+          const totalQty = w.quantity;
+          const yesterday = toISODate(new Date(new Date(date).getTime() - 86400000));
+          const cumUntilYesterday = sumByDateMap(realized, w.code, yesterday);
+          const todayValue = Number(draft[w.code]) || 0;
+          const cumIncludingToday = cumUntilYesterday + todayValue;
+          const realPct = totalQty > 0 ? (cumIncludingToday / totalQty) * 100 : 0;
+          const cumPlan = sumByDateMap(planned, w.code, date);
+          const planPct = totalQty > 0 ? (cumPlan / totalQty) * 100 : 0;
+          const spi = planPct > 0 ? realPct / planPct : null;
+          const spiL = spiLevel(spi);
+          const isActive = todayValue > 0;
+          const isComplete = realPct >= 99;
+
+          return (
+            <div
+              key={w.id}
+              className={cn(
+                "bg-white rounded-xl border p-3 shadow-soft transition-all",
+                isActive ? "border-realized/40 ring-1 ring-realized/20 bg-realized/[0.02]" : "border-border",
+                isComplete && "border-green/40 bg-green/[0.03]"
+              )}
+            >
+              {/* Üst: kod + isim + SPI badge */}
+              <div className="flex items-start gap-2 mb-3">
+                <span className="font-mono text-[10px] text-text3 mt-0.5 shrink-0 bg-bg2 px-1.5 py-0.5 rounded">{w.code}</span>
+                <span className="flex-1 text-[13px] font-semibold text-text leading-snug min-w-0">{w.name}</span>
+                {spi != null && spiL && (
+                  <span
+                    className={cn(
+                      "shrink-0 text-[10px] px-1.5 py-0.5 rounded font-bold font-mono",
+                      spiL === "good" && "bg-green/15 text-green",
+                      spiL === "warn" && "bg-yellow/15 text-yellow-dark",
+                      spiL === "bad" && "bg-red/15 text-red"
+                    )}
+                    title="SPI = EV/PV"
+                  >
+                    {spi.toFixed(2)}
+                  </span>
+                )}
+              </div>
+
+              {/* Alt: büyük input + kümülatif sağda */}
+              <div className="flex items-end gap-3">
+                <div className="flex-1 min-w-0">
+                  <label className="block text-[10px] text-text3 uppercase tracking-wider font-bold mb-1">
+                    Bugünkü Miktar {w.unit && <span className="text-text3/70">({w.unit})</span>}
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.1"
+                    value={draft[w.code] ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === "" || /^-?\d*\.?\d{0,1}$/.test(v)) {
+                        setDraft((s) => ({ ...s, [w.code]: v }));
+                      }
+                    }}
+                    placeholder="0"
+                    className={cn(
+                      "w-full h-12 px-3 text-xl font-mono font-bold tabular-nums rounded-lg border-2",
+                      "focus:outline-none focus:border-accent focus:shadow-focus transition-colors",
+                      isActive
+                        ? "border-realized/50 bg-realized/5 text-realized"
+                        : "border-border bg-white text-text"
+                    )}
+                  />
+                </div>
+                <div className="text-right pb-1.5 shrink-0">
+                  <div className="text-[9px] text-text3 uppercase font-bold tracking-wider">Kümül %</div>
+                  <div className={cn(
+                    "font-mono text-xl font-extrabold tabular-nums leading-none mt-0.5",
+                    isComplete ? "text-green" : isActive ? "text-realized" : "text-text2"
+                  )}>
+                    {totalQty > 0 ? `${realPct.toFixed(0)}` : "—"}
+                    {totalQty > 0 && <span className="text-sm">%</span>}
+                  </div>
+                  {totalQty > 0 && (
+                    <div className="text-[9px] text-text3 font-mono mt-0.5">
+                      {formatNumber(cumIncludingToday, 0)}/{formatNumber(totalQty, 0)}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Plan karşılaştırma */}
+              {planPct > 0 && (
+                <div className="mt-2 pt-2 border-t border-border flex items-center justify-between text-[10px] font-mono">
+                  <span className="text-text3">
+                    Plan: <span className="text-planned font-bold">{planPct.toFixed(1)}%</span>
+                  </span>
+                  <span className={cn(
+                    "font-bold",
+                    realPct >= planPct ? "text-green" : "text-red"
+                  )}>
+                    Δ {(realPct - planPct >= 0 ? "+" : "")}{(realPct - planPct).toFixed(1)}%
+                  </span>
+                </div>
+              )}
+
+              {cumUntilYesterday > 0 && (
+                <div className="mt-1.5 text-[10px] text-text3 font-mono">
+                  Düne kadar: <span className="text-text2">{formatNumber(cumUntilYesterday, 1)}</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {visibleRows.filter((r) => r.item.isLeaf).length === 0 && (
+          <div className="bg-white rounded-xl border border-border p-6 text-center text-text3 text-sm">
+            Hiç iş kalemi yok.
+          </div>
+        )}
+      </div>
+
+      {/* MOBILE: Sticky bottom action bar — bottom-nav'ın üstünde */}
+      <div
+        className="md:hidden fixed left-0 right-0 z-30 bg-white/95 backdrop-blur-xl border-t border-border px-3 py-2 flex gap-2 shadow-large"
+        style={{
+          bottom: "calc(64px + env(safe-area-inset-bottom, 0px))",
+        }}
+      >
+        <button
+          onClick={() => shiftDate(-1)}
+          disabled={!canPrev}
+          className="flex-1 h-12 rounded-lg bg-white border border-border text-text2 flex items-center justify-center gap-1 font-semibold text-sm disabled:opacity-40 active:scale-95 transition-all"
+        >
+          <ChevronLeft size={16} />
+          Önceki
+        </button>
+        <button
+          onClick={saveAll}
+          className="flex-[2] h-12 rounded-lg bg-accent text-white flex items-center justify-center gap-2 font-bold text-sm shadow-medium active:scale-95 transition-all"
+        >
+          <Save size={16} />
+          Kaydet
+        </button>
+        <button
+          onClick={() => shiftDate(1)}
+          disabled={!canNext}
+          className="flex-1 h-12 rounded-lg bg-white border border-border text-text2 flex items-center justify-center gap-1 font-semibold text-sm disabled:opacity-40 active:scale-95 transition-all"
+        >
+          Sonraki
+          <ChevronRight size={16} />
+        </button>
+      </div>
+
+      {/* ═══════ DESKTOP: Tablo (md ve üstü) ═══════ */}
+      <Card className="hidden md:block !p-0 overflow-hidden">
         <div className="max-h-[70vh] overflow-y-auto overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

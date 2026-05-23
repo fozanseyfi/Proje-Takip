@@ -4,7 +4,9 @@
  * PDF: html2canvas-pro + jsPDF üzerinden seviye bazlı renkli + bold tasarım.
  */
 
-import * as XLSX from "xlsx";
+// XLSX lazy import — sadece export çağrılınca yüklenir.
+// import işlemini async fonksiyon içine taşıdık (büyük lib, ~400 KB).
+import type * as XLSXType from "xlsx";
 import { formatDate, toISODate } from "@/lib/utils";
 import type { WbsItem } from "@/lib/store/types";
 import type { HierarchicalWeight } from "@/lib/calc/sections";
@@ -50,20 +52,23 @@ function escapeHtml(s: unknown): string {
 // ============================================================
 // EXCEL ÇIKTI — başlıklı, renkli, kolon genişlikleri ayarlı
 // ============================================================
-export function exportWbsToExcel(
+export async function exportWbsToExcel(
   projectName: string,
   rows: WbsItem[],
   hierarchical: Map<string, HierarchicalWeight>
-): void {
+): Promise<void> {
   loadingOverlay.start("WBS Excel hazırlanıyor");
   try {
-    _renderWbsToExcel(projectName, rows, hierarchical);
+    // Lazy XLSX yükle — ilk render bundle'ında bu paket olmaz
+    const XLSX = await import("xlsx");
+    _renderWbsToExcel(XLSX, projectName, rows, hierarchical);
   } finally {
     loadingOverlay.stop();
   }
 }
 
 function _renderWbsToExcel(
+  XLSX: typeof XLSXType,
   projectName: string,
   rows: WbsItem[],
   hierarchical: Map<string, HierarchicalWeight>
@@ -107,7 +112,7 @@ function _renderWbsToExcel(
     const cellAddr = XLSX.utils.encode_cell({ r: 0, c: i });
     const cell = ws[cellAddr];
     if (cell) {
-      (cell as XLSX.CellObject & { s?: unknown }).s = {
+      (cell as XLSXType.CellObject & { s?: unknown }).s = {
         font: { bold: true, color: { rgb: "FFFFFFFF" } },
         fill: { fgColor: { rgb: "FF1E40AF" } },
         alignment: { horizontal: "center", vertical: "center" },
@@ -128,7 +133,7 @@ function _renderWbsToExcel(
         2: "FFE9D5FF",
         3: "FFD1FAE5",
       };
-      (cell as XLSX.CellObject & { s?: unknown }).s = {
+      (cell as XLSXType.CellObject & { s?: unknown }).s = {
         fill: { fgColor: { rgb: colorMap[lvl] ?? "FFFFFFFF" } },
         font: { bold: lvl <= 2 },
       };
@@ -166,7 +171,7 @@ function _renderWbsToExcel(
     const cellAddr = XLSX.utils.encode_cell({ r: 0, c: i });
     const cell = wsSummary[cellAddr];
     if (cell) {
-      (cell as XLSX.CellObject & { s?: unknown }).s = {
+      (cell as XLSXType.CellObject & { s?: unknown }).s = {
         font: { bold: true, color: { rgb: "FFFFFFFF" } },
         fill: { fgColor: { rgb: "FF059669" } },
         alignment: { horizontal: "center" },

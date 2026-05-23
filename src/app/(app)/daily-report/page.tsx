@@ -454,9 +454,45 @@ export default function DailyReportPage() {
         <Card>
           <CardTitle>İpuçları</CardTitle>
           <Alert variant="info">
-            Telefon kamerası kullanılabilir. Hava durumu mock — gerçek API entegrasyonu sonra eklenecek.
+            Telefon kamerası kullanılabilir (öndeki/arkadaki). Hava durumu otomatik dolar
+            (Open-Meteo, proje koordinatları). DCR PDF butonu kayıt sonrası imzalanan günlük
+            rapor üretir.
           </Alert>
         </Card>
+        {/* Mobile alt boşluk — sticky bottom action bar için */}
+        <div className="md:hidden h-20" aria-hidden="true" />
+      </div>
+
+      {/* MOBILE: Sticky bottom action bar */}
+      <div
+        className="md:hidden fixed left-0 right-0 z-30 bg-white/95 backdrop-blur-xl border-t border-border px-3 py-2 flex gap-2 shadow-large"
+        style={{
+          bottom: "calc(64px + env(safe-area-inset-bottom, 0px))",
+        }}
+      >
+        <button
+          onClick={() => shift(-1)}
+          disabled={!canPrev}
+          className="flex-1 h-12 rounded-lg bg-white border border-border text-text2 flex items-center justify-center gap-1 font-semibold text-sm disabled:opacity-40 active:scale-95 transition-all"
+        >
+          <ChevronLeft size={16} />
+          Önceki
+        </button>
+        <button
+          onClick={save}
+          className="flex-[2] h-12 rounded-lg bg-accent text-white flex items-center justify-center gap-2 font-bold text-sm shadow-medium active:scale-95 transition-all"
+        >
+          <Save size={16} />
+          Kaydet
+        </button>
+        <button
+          onClick={() => shift(1)}
+          disabled={!canNext}
+          className="flex-1 h-12 rounded-lg bg-white border border-border text-text2 flex items-center justify-center gap-1 font-semibold text-sm disabled:opacity-40 active:scale-95 transition-all"
+        >
+          Sonraki
+          <ChevronRight size={16} />
+        </button>
       </div>
     </>
   );

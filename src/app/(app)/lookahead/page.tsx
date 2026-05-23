@@ -10,6 +10,7 @@ import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
+import { confirmAction } from "@/components/ui/confirm";
 import { formatDate, toISODate, cn, addDays, daysBetween } from "@/lib/utils";
 import type { Priority, LookaheadKind } from "@/lib/store/types";
 
@@ -185,8 +186,10 @@ export default function LookaheadPage() {
                       </div>
                     </div>
                     <button
-                      onClick={() => {
-                        if (confirm("Silinsin mi?")) del(it.id);
+                      onClick={async () => {
+                        if (await confirmAction({ title: "Kayıt silinsin mi?", message: "Bu kritik iş / tutanak kaydı silinecek.", danger: true, confirmText: "Sil" })) {
+                          del(it.id);
+                        }
                       }}
                       className="p-1.5 text-text3 hover:text-red rounded shrink-0"
                     >
@@ -239,8 +242,10 @@ export default function LookaheadPage() {
                           </div>
                         </div>
                         <button
-                          onClick={() => {
-                            if (confirm("Kalıcı olarak silinsin mi?")) del(it.id);
+                          onClick={async () => {
+                            if (await confirmAction({ title: "Kalıcı silme", message: "Bu kayıt kalıcı olarak silinecek, geri yüklenemez.", danger: true, confirmText: "Kalıcı Sil" })) {
+                              del(it.id);
+                            }
                           }}
                           className="p-1.5 text-text3 hover:text-red rounded shrink-0"
                           title="Kalıcı sil"

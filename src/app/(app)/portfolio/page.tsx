@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Globe, ArrowUpDown, MapPin, Plus, ShieldAlert, Sparkles, ArrowRight, ChevronDown, Copy } from "lucide-react";
 import { useStore, useCurrentUser, isDemoProject, DEMO_REPORT_DATE } from "@/lib/store";
 import type { Project, ProjectStatus } from "@/lib/store/types";
-import { SAMPLE_PROJECT_NAME } from "@/lib/data/sample-loader";
 import { CloneProjectDialog } from "@/components/projects/clone-project-dialog";
 import { Card, CardTitle, KpiCard } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -48,9 +47,6 @@ export default function PortfolioPage() {
 
   const sortedRows = useMemo(() => {
     return [...rows].sort((a, b) => {
-      // Örnek proje her zaman en başta sabit
-      if (a.project.name === SAMPLE_PROJECT_NAME) return -1;
-      if (b.project.name === SAMPLE_PROJECT_NAME) return 1;
       if (sortBy === "name") return a.project.name.localeCompare(b.project.name);
       if (sortBy === "spi") {
         const aSpi = a.spi ?? 1;
@@ -164,7 +160,6 @@ export default function PortfolioPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {sortedRows.map((r) => {
           const lvl = spiLevel(r.spi);
-          const isSample = r.project.name === SAMPLE_PROJECT_NAME;
           return (
             <div
               key={r.project.id}
@@ -173,8 +168,7 @@ export default function PortfolioPage() {
                 lvl === "bad" && "border-red/30",
                 lvl === "warn" && "border-yellow/30",
                 lvl === "good" && "border-green/30",
-                !lvl && "border-border",
-                isSample && "ring-2 ring-accent/15 bg-gradient-to-br from-accent/5 to-white"
+                !lvl && "border-border"
               )}
             >
               <div className="flex items-start justify-between mb-2 gap-2">
@@ -183,7 +177,6 @@ export default function PortfolioPage() {
                     <div className="font-display font-bold text-base text-text truncate">
                       {r.project.name}
                     </div>
-                    {isSample && <Badge variant="accent">📌 Örnek</Badge>}
                   </div>
                   <div className="flex items-center gap-1 text-[11px] text-text3 mt-0.5">
                     <MapPin size={11} />

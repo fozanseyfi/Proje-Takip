@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { useToast } from "@/components/ui/toast";
 import { loadingOverlay } from "@/lib/ui-loading";
+import { confirmAction } from "@/components/ui/confirm";
 
 export default function BackupPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -78,9 +79,13 @@ export default function BackupPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (
-      !confirm(
-        "DİKKAT: Mevcut tüm verilerin (projeler, WBS, puantaj, faturalar…) yedek dosyası ile DEĞİŞTİRİLECEK. Önce mevcut verini export'tan yedekle. Devam edilsin mi?"
-      )
+      !(await confirmAction({
+        title: "DİKKAT — Mevcut veriler değiştirilecek",
+        message:
+          "Projeler, WBS, puantaj, faturalar… HEPSİ yedek dosyası ile DEĞİŞTİRİLECEK. Bu işlem geri alınamaz.\n\nÖnce mevcut verini Yedek Al ile indirmeyi unutma. Devam edilsin mi?",
+        danger: true,
+        confirmText: "Üzerine Yaz",
+      }))
     ) {
       e.target.value = "";
       return;

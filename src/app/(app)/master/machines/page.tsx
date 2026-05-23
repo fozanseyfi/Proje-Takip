@@ -10,6 +10,7 @@ import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
+import { confirmAction } from "@/components/ui/confirm";
 import { TableWrap, Table, THead, TBody, TR, TH, TD, Empty } from "@/components/ui/table";
 import { formatMoney, toISODate, cn } from "@/lib/utils";
 import { downloadMasterListPDF } from "@/lib/pdf/master-list";
@@ -622,8 +623,15 @@ export default function MachinesMasterPage() {
                         <Pencil size={12} />
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm(`${m.name} silinsin mi?`)) softDeleteMachine(m.id);
+                        onClick={async () => {
+                          if (await confirmAction({
+                            title: `${m.name} silinsin mi?`,
+                            message: "Makine master listesinden çıkarılacak (Çöp Kutusu'ndan geri yüklenebilir).",
+                            danger: true,
+                            confirmText: "Sil",
+                          })) {
+                            softDeleteMachine(m.id);
+                          }
                         }}
                         className="p-1 text-text3 hover:text-red rounded"
                       >

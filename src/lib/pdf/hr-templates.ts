@@ -1035,6 +1035,11 @@ async function downloadChecklistPDF(config: ChecklistConfig): Promise<void> {
       const imgMmH = sliceH / pxPerMm;
       pdf.addImage(imgData, "PNG", marginX, bodyTop, contentW, imgMmH);
 
+      // Slice canvas'ı bellekten serbest bırak
+      sctx.clearRect(0, 0, slice.width, slice.height);
+      slice.width = 0;
+      slice.height = 0;
+
       yOffset = safeEnd;
       pageNo++;
       if (pageNo > 20) break;
@@ -1329,6 +1334,11 @@ export async function downloadDocumentChecklistPDF(
       if (pageNo > 0) pdf.addPage();
       const imgMmH = sliceH / pxPerMm;
       pdf.addImage(imgData, "PNG", marginX, bodyTop, contentW, imgMmH);
+
+      // Slice canvas'ı bellekten serbest bırak
+      sctx.clearRect(0, 0, slice.width, slice.height);
+      slice.width = 0;
+      slice.height = 0;
 
       yOffset = safeEnd;
       pageNo++;

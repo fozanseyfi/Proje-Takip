@@ -13,6 +13,7 @@ import {
   MessageSquarePlus,
   Filter,
   AlertTriangle,
+  ListPlus,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { PageHeader } from "@/components/layout/page-header";
@@ -30,6 +31,7 @@ import {
 } from "@/lib/data/teslim-alma-template";
 import { downloadTeslimAlmaPDF } from "@/lib/pdf/teslim-alma";
 import { loadingOverlay } from "@/lib/ui-loading";
+import { confirmAction } from "@/components/ui/confirm";
 
 export default function TeslimAlmaPage() {
   const project = useStore((s) =>
@@ -42,6 +44,10 @@ export default function TeslimAlmaPage() {
   const updateItem = useStore((s) => s.updateTeslimAlmaItem);
   const updateMeta = useStore((s) => s.updateTeslimAlmaMeta);
   const resetReport = useStore((s) => s.resetTeslimAlmaReport);
+  const addLookahead = useStore((s) => s.addLookahead);
+  const existingLookahead = useStore((s) =>
+    s.currentProjectId ? s.lookahead.filter((l) => l.projectId === s.currentProjectId) : []
+  );
   const toast = useToast((p) => p.push);
 
   const [filterMode, setFilterMode] = useState<"all" | "pending" | "issues">("all");
@@ -153,9 +159,85 @@ export default function TeslimAlmaPage() {
     }
   }
 
-  function handleReset() {
+  /**
+   * Uygunsuz / şartlı maddeleri Lookahead'e "Kritik İş" olarak aktar.
+   * Daha önce aktarılmış olanlar atlanır (task metni = "Teslim Alma · <itemId>" ile match).
+   */
+  async function exportNCRtoLookahead() {
     if (!project) return;
-    if (!confirm(`"${project.name}" projesinin tüm Teslim Alma cevapları silinecek. Bu işlem geri alınamaz. Devam edilsin mi?`)) return;
+    // fail + conditional maddeleri topla
+    const issues: Array<{ id: string; text: string; severity: "major" | "minor"; status: TeslimAlmaStatus; sectionId: string; subsectionId: string; condition?: string; note?: string }> = [];
+    for (const sec of TESLIM_ALMA_TEMPLATE) {
+      for (const sub of sec.subsections) {
+        for (const it of sub.items) {
+          const r = items[it.id];
+          if (r?.status === "fail" || r?.status === "conditional") {
+            issues.push({
+              id: it.id,
+              text: it.text,
+              severity: it.severity,
+              status: r.status,
+              sectionId: sec.id,
+              subsectionId: sub.id,
+              condition: r.condition,
+              note: r.note,
+            });
+          }
+        }
+      }
+    }
+    if (issues.length === 0) {
+      toast("Aktarılacak uygunsuzluk yok — tüm maddeler uygun veya beklemede", "info");
+      return;
+    }
+    // Daha önce eklenmiş olanları tanı (notes alanında "TA:<itemId>" tag'i kullanıyoruz)
+    const alreadyExported = new Set(
+      existingLookahead
+        .map((l) => l.notes?.match(/TA:([\w-]+)/)?.[1])
+        .filter(Boolean) as string[]
+    );
+    const fresh = issues.filter((i) => !alreadyExported.has(i.id));
+    if (fresh.length === 0) {
+      toast("Tüm uygunsuzluklar zaten Lookahead'de mevcut", "info");
+      return;
+    }
+    const ok = await confirmAction({
+      title: `${fresh.length} uygunsuzluk aktarılsın`,
+      message: `Teslim Alma listesindeki ${fresh.length} uygunsuz / şartlı madde, "Kritik & Tutanak" sayfasına "kritik iş" olarak eklenecek.\n\nMajor seviye: critical priority\nMinor seviye: high priority\n\nDevam edilsin mi?`,
+      confirmText: `${fresh.length} Maddeyi Aktar`,
+    });
+    if (!ok) return;
+    // Her madde için lookahead item üret
+    const today = new Date().toISOString().slice(0, 10);
+    for (const i of fresh) {
+      addLookahead({
+        projectId: project.id,
+        task: `[${i.sectionId}.${i.subsectionId.replace(/^[A-Z]\./, "")} · ${i.id}] ${i.text}`,
+        date: today,
+        priority: i.severity === "major" ? "critical" : "high",
+        kind: "kritik_is",
+        done: false,
+        notes: [
+          `Teslim Alma denetimi · ${i.status === "fail" ? "Uygun Değil" : "Şartlı"} (${i.severity})`,
+          i.condition ? `Şart: ${i.condition}` : null,
+          i.note ? `Açıklama: ${i.note}` : null,
+          `TA:${i.id}`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      });
+    }
+    toast(`${fresh.length} uygunsuzluk Lookahead'e aktarıldı`, "success");
+  }
+
+  async function handleReset() {
+    if (!project) return;
+    if (!(await confirmAction({
+      title: "Teslim Alma sıfırlansın",
+      message: `"${project.name}" projesinin TÜM Teslim Alma cevapları silinecek. Bu işlem geri alınamaz.`,
+      danger: true,
+      confirmText: "Sıfırla",
+    }))) return;
     resetReport(project.id);
     toast("Teslim Alma raporu sıfırlandı", "info");
   }
@@ -198,6 +280,17 @@ export default function TeslimAlmaPage() {
             >
               <FileWarning size={14} />
               NCR ({counts.fail + counts.conditional})
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportNCRtoLookahead}
+              disabled={(counts.fail + counts.conditional) === 0}
+              title="Uygunsuz + şartlı maddeleri 'Kritik & Tutanak' listesine aktar"
+              className="border-yellow/40 text-yellow-dark hover:bg-yellow/5"
+            >
+              <ListPlus size={14} />
+              Lookahead'e Aktar
             </Button>
             <Button variant="ghost" size="sm" onClick={handleReset} title="Tüm cevapları sil">
               <RotateCcw size={14} />

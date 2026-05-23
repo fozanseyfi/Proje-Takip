@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { confirmAction } from "@/components/ui/confirm";
 import { TableWrap, Table, THead, TBody, TR, TH, TD, Empty } from "@/components/ui/table";
 import { MultiSelectFilter } from "@/components/ui/multi-select-filter";
 import { formatDate, toISODate, cn } from "@/lib/utils";
@@ -393,8 +394,12 @@ export default function TeamMachinesPage() {
                             <span>{endText}</span>
                             {isActive && (
                               <button
-                                onClick={() => {
-                                  if (confirm(`${r.machine.name} bu projeden çıkartılsın mı?`)) {
+                                onClick={async () => {
+                                  if (await confirmAction({
+                                    title: `${r.machine.name} çıkartılsın mı?`,
+                                    message: "Bu makine projeden çıkarılır. Master listede kalır, başka projelere atanabilir.",
+                                    confirmText: "Çıkart",
+                                  })) {
                                     unassignMachine(a.id);
                                   }
                                 }}

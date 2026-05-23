@@ -37,8 +37,7 @@ import { DEFAULT_WBS, type WbsTemplateItem } from "@/lib/data/default-wbs";
 import { uid, toISODate } from "@/lib/utils";
 // Sample seed kaldırıldı (2026-05-23) — Ankara Polatlı GES örnek projesi artık
 // yüklenmez. Yeni kullanıcılar boş bir workspace ile başlar; gerçek proje açar.
-// Dosya (sample-loader.ts, sample-pools.ts) repo'da kalıyor — gelecekte demo
-// modu istenirse veya yeniden açılmak istenirse referans olarak.
+// sample-loader.ts ve sample-pools.ts dosyaları da repo'dan silindi.
 
 // ============================================================
 // State shape

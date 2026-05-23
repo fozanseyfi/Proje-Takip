@@ -11,6 +11,7 @@ import { DemoProjectBanner } from "./demo-project-banner";
 import { SandboxWelcome } from "./sandbox-welcome";
 import { PageLoaderOverlay, NavigationLoader } from "./page-loader";
 import { Toaster } from "@/components/ui/toast";
+import { ConfirmRoot } from "@/components/ui/confirm";
 import { isSandboxMode } from "@/lib/sandbox";
 import { cn } from "@/lib/utils";
 
@@ -66,6 +67,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
       <NavigationLoader />
       <PageLoaderOverlay />
+      <ConfirmRoot />
       <Toaster />
     </SeedProvider>
   );

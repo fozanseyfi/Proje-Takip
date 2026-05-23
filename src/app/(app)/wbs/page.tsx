@@ -29,6 +29,7 @@ import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
+import { confirmAction } from "@/components/ui/confirm";
 import { cn, formatNumber } from "@/lib/utils";
 import {
   computeHierarchicalWeights,
@@ -383,9 +384,15 @@ export default function WbsPage() {
               <Pencil size={12} />
             </button>
             <button
-              onClick={() => {
-                if (confirm(`"${w.name}" silinsin mi? (Çöp Kutusu'ndan geri yüklenebilir)`))
+              onClick={async () => {
+                if (await confirmAction({
+                  title: `"${w.name}" silinsin mi?`,
+                  message: "Bu WBS kalemi Çöp Kutusu'na taşınır — daha sonra geri yüklenebilir.",
+                  danger: true,
+                  confirmText: "Sil",
+                })) {
                   softDeleteWbs(w.id);
+                }
               }}
               className="p-1.5 rounded-lg text-text3 hover:bg-bg3 hover:text-red transition-colors"
               title="Sil"
@@ -503,15 +510,22 @@ export default function WbsPage() {
             {!hasCustomTemplate && (
               <Button
                 variant="outline"
-                onClick={() => {
+                onClick={async () => {
                   if (!project) return;
-                  if (
-                    confirm(
-                      `"${project.name}" projesindeki mevcut WBS yapısı, BUNDAN SONRA AÇILACAK TÜM YENİ PROJELERİN şablonu olarak kaydedilecek.\n\nDevam edilsin mi?`
-                    )
-                  ) {
+                  if (await confirmAction({
+                    title: "WBS yapısı şablon olarak kaydedilsin",
+                    message: `"${project.name}" projesindeki mevcut WBS yapısı, bundan sonra açılacak TÜM YENİ PROJELERİN şablonu olarak kaydedilecek.`,
+                    confirmText: "Şablon Yap",
+                  })) {
                     useStore.getState().saveProjectWbsAsTemplate(project.id);
-                    alert("Mevcut WBS yapısı şablon olarak kaydedildi. Yeni projeler bu yapıyı kullanacak.");
+                    // alert da custom dialog'la değiştirilebilir, şimdilik info toast yeterli
+                    await confirmAction({
+                      title: "Şablon kaydedildi",
+                      message: "Mevcut WBS yapısı şablon olarak kaydedildi. Yeni projeler bu yapıyı kullanacak.",
+                      variant: "info",
+                      confirmText: "Tamam",
+                      cancelText: "",
+                    });
                   }
                 }}
                 className="text-accent border-accent/40 hover:bg-accent/5"

@@ -11,6 +11,7 @@ import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
+import { confirmAction } from "@/components/ui/confirm";
 import { TableWrap, Table, THead, TBody, TR, TH, TD, Empty } from "@/components/ui/table";
 import { toISODate, cn } from "@/lib/utils";
 import { downloadMasterListPDF } from "@/lib/pdf/master-list";
@@ -630,8 +631,15 @@ export default function PersonnelMasterPage() {
                         <Pencil size={12} />
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm(`${p.firstName} ${p.lastName} silinsin mi?`)) softDeletePersonnel(p.id);
+                        onClick={async () => {
+                          if (await confirmAction({
+                            title: `${p.firstName} ${p.lastName} silinsin mi?`,
+                            message: "Personel master listesinden çıkarılacak (Çöp Kutusu'ndan geri yüklenebilir).",
+                            danger: true,
+                            confirmText: "Sil",
+                          })) {
+                            softDeletePersonnel(p.id);
+                          }
                         }}
                         className="p-1 text-text3 hover:text-red rounded"
                       >

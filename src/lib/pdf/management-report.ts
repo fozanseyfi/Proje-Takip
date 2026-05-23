@@ -91,6 +91,24 @@ async function _renderManagementReportPDF(input: Input): Promise<void> {
     import("html2canvas-pro"),
   ]);
 
+  // Geist fontu — footer text'lerinde Türkçe karakter desteği için (ç/ğ/ş/ı).
+  // jsPDF default Helvetica WinAnsi-1252 dışı karakterleri bozar.
+  const fontResp = await fetch("/fonts/Geist-Regular.ttf");
+  if (!fontResp.ok) throw new Error("Geist fontu yüklenemedi");
+  const fontBuf = await fontResp.arrayBuffer();
+  const fontB64 = (() => {
+    const bytes = new Uint8Array(fontBuf);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(
+        null,
+        Array.from(bytes.subarray(i, i + chunk))
+      );
+    }
+    return btoa(binary);
+  })();
+
   // ════════════════════════════════════════════════════════════════════
   // HESAPLAMALAR
   // ════════════════════════════════════════════════════════════════════
@@ -787,6 +805,10 @@ async function _renderManagementReportPDF(input: Input): Promise<void> {
     const sectionTops = sectionEls.map((el) => (el.getBoundingClientRect().top - rootRect.top) * scale);
 
     const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    // Geist fontu yükle ve aktive et — footer'da Türkçe karakter desteği için
+    pdf.addFileToVFS("Geist-Regular.ttf", fontB64);
+    pdf.addFont("Geist-Regular.ttf", "Geist", "normal");
+    pdf.setFont("Geist", "normal");
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
     const pxPerMm = canvas.width / pageW;
@@ -832,6 +854,11 @@ async function _renderManagementReportPDF(input: Input): Promise<void> {
         { align: "center" }
       );
       pdf.text(`Sayfa ${pageNo + 1}`, pageW - 8, pageH - 4, { align: "right" });
+
+      // Slice canvas'ı bellekten serbest bırak
+      ctx.clearRect(0, 0, slice.width, slice.height);
+      slice.width = 0;
+      slice.height = 0;
 
       pageStart = pageEnd;
       pageNo++;

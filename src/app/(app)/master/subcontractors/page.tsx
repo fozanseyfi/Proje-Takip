@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { confirmAction } from "@/components/ui/confirm";
 import { TableWrap, Table, THead, TBody, TR, TH, TD, Empty } from "@/components/ui/table";
 import { formatMoney, formatDate, toISODate, cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast";
@@ -402,8 +403,13 @@ export default function SubcontractorsMasterPage() {
                           <Pencil size={12} />
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm(`${s.name} silinsin mi? Bu firmanın alt yüklenici faturaları da silinecek.`)) {
+                          onClick={async () => {
+                            if (await confirmAction({
+                              title: `${s.name} silinsin mi?`,
+                              message: "Alt yüklenici ve bu firmanın TÜM faturaları silinecek. Bu işlem geri alınamaz.",
+                              danger: true,
+                              confirmText: "Sil",
+                            })) {
                               deleteSubcontractor(s.id);
                               toast("Alt yüklenici silindi.", "info");
                             }

@@ -37,6 +37,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
+import { confirmAction } from "@/components/ui/confirm";
 import { computeProgress } from "@/lib/calc/progress";
 import { formatNumber, formatDate, toISODate, addDays, daysBetween, cn } from "@/lib/utils";
 import { ListChecks, Link2, Unlink, X, AlertTriangle } from "lucide-react";
@@ -1949,13 +1950,16 @@ export default function PlanningPage() {
                 ? `Adım 4: Baseline ${new Date(baselineSetAt).toLocaleString("tr-TR")} itibarıyla donduruldu — yeniden almak için tıkla`
                 : "Adım 4: Şuanki planı baseline olarak dondur"
             }
-            onClick={() => {
+            onClick={async () => {
               if (!project) return;
-              const confirmed = window.confirm(
-                baselineSetAt
-                  ? "Mevcut baseline ezilecek ve şuanki planlama yeni baseline olarak kaydedilecek. Devam?"
-                  : "Şuanki planlama tüm kalemler için baseline olarak kaydedilecek. Devam?"
-              );
+              const confirmed = await confirmAction({
+                title: baselineSetAt ? "Baseline ezilecek" : "Baseline al",
+                message: baselineSetAt
+                  ? "Mevcut baseline ezilecek ve şu anki planlama yeni baseline olarak kaydedilecek. Sapma takibi sıfırdan başlayacak."
+                  : "Şu anki planlama tüm kalemler için baseline olarak kaydedilecek. Bu, sapma takibi için referans noktasıdır.",
+                danger: !!baselineSetAt,
+                confirmText: baselineSetAt ? "Yeniden Baseline Al" : "Baseline Al",
+              });
               if (!confirmed) return;
               rebaselineAll(project.id);
               toast("Baseline güncellendi (tüm kalemler dahil)", "success");

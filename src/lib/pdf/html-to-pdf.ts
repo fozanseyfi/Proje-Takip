@@ -124,6 +124,11 @@ export async function renderHtmlToPdf(opts: HTMLToPDFOptions): Promise<JsPDFType
     const imgMmH = sliceH / pxPerMm;
     pdf.addImage(imgData, "PNG", margin.left, margin.top, contentW, imgMmH);
 
+    // Slice canvas'ı bellekten serbest bırak
+    sctx.clearRect(0, 0, slice.width, slice.height);
+    slice.width = 0;
+    slice.height = 0;
+
     yOffset = safeEnd;
     pageNo++;
 

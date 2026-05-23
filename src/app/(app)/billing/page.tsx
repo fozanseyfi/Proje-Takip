@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useStore, useCurrentProject } from "@/lib/store";
 import { PageHeader } from "@/components/layout/page-header";
+import { confirmAction } from "@/components/ui/confirm";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogFooter } from "@/components/ui/dialog";
@@ -380,8 +381,10 @@ function OwnerInvoicesTab({
                         <Pencil size={12} />
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm("Silinsin mi?")) del(it.id);
+                        onClick={async () => {
+                          if (await confirmAction({ title: "Kayıt silinsin mi?", message: "Bu işlem geri alınamaz.", danger: true, confirmText: "Sil" })) {
+                            del(it.id);
+                          }
                         }}
                         className="p-1 text-text3 hover:text-red rounded"
                       >
@@ -567,8 +570,15 @@ function SubcontractsTab({
                           <Pencil size={12} />
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm(`${s.name} ve tüm faturaları silinsin mi?`)) del(s.id);
+                          onClick={async () => {
+                            if (await confirmAction({
+                              title: `${s.name} silinsin mi?`,
+                              message: `Bu alt yüklenici ve TÜM faturaları silinecek. İşlem geri alınamaz.`,
+                              danger: true,
+                              confirmText: "Sil",
+                            })) {
+                              del(s.id);
+                            }
                           }}
                           className="p-1 text-text3 hover:text-red rounded"
                         >
@@ -1493,8 +1503,10 @@ function PaymentPlanTab({
                       todayISO={todayISO}
                       onRealize={() => setRealizing(m)}
                       onEdit={() => setEditing(m)}
-                      onDelete={() => {
-                        if (confirm("Silinsin mi?")) del(m.id);
+                      onDelete={async () => {
+                        if (await confirmAction({ title: "Hakediş silinsin mi?", message: "Bu hakediş kaydı silinecek. Bağlı ödemeler de silinir.", danger: true, confirmText: "Sil" })) {
+                          del(m.id);
+                        }
                       }}
                     />
                   ))

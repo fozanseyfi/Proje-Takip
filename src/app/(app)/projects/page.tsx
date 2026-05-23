@@ -14,10 +14,10 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { confirmAction } from "@/components/ui/confirm";
 import { formatDate, toISODate, addDays } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/store";
 import type { Currency } from "@/lib/utils";
-import { SAMPLE_PROJECT_NAME } from "@/lib/data/sample-loader";
 
 const STATUS_LABEL: Record<ProjectStatus, string> = {
   draft: "Taslak",
@@ -53,14 +53,8 @@ export default function ProjectsPage() {
     }
   }, [searchParams, router]);
 
-  // Örnek proje her zaman en başta sabit
   const sortedProjects = useMemo(
-    () =>
-      [...projects].sort((a, b) => {
-        if (a.name === SAMPLE_PROJECT_NAME) return -1;
-        if (b.name === SAMPLE_PROJECT_NAME) return 1;
-        return a.name.localeCompare(b.name);
-      }),
+    () => [...projects].sort((a, b) => a.name.localeCompare(b.name)),
     [projects]
   );
 
@@ -119,12 +113,13 @@ export default function ProjectsPage() {
           <>
             <Button
               variant="outline"
-              onClick={() => {
-                if (
-                  confirm(
-                    "TÜM örnek verileri (Ankara Polatlı GES projesi, personel, makine, alt yüklenici, atamalar) silinecek. Hesabın korunur. Devam edilsin mi?"
-                  )
-                ) {
+              onClick={async () => {
+                if (await confirmAction({
+                  title: "Tüm verileri sil",
+                  message: "Projeler, WBS, plan/gerçekleşme, puantaj, faturalar... HEPSİ silinecek. Hesap bilgileriniz korunur. Bu işlem geri alınamaz.",
+                  danger: true,
+                  confirmText: "Sıfırdan Başla",
+                })) {
                   wipeAndStartFresh();
                   window.location.reload();
                 }
@@ -152,7 +147,6 @@ export default function ProjectsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {sortedProjects.map((p, i) => {
-            const isSample = p.name === SAMPLE_PROJECT_NAME;
             return (
             <Card
               key={p.id}
@@ -162,15 +156,13 @@ export default function ProjectsPage() {
                 i === 0 && "animate-slide-up-delay-1",
                 i === 1 && "animate-slide-up-delay-2",
                 i === 2 && "animate-slide-up-delay-3",
-                i >= 3 && "animate-slide-up-delay-4",
-                isSample && "border-accent/30 bg-gradient-to-br from-accent/5 to-white"
+                i >= 3 && "animate-slide-up-delay-4"
               )}
             >
               <div className="flex items-start justify-between mb-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <div className="font-display font-bold text-lg text-text truncate">{p.name}</div>
-                    {isSample && <Badge variant="accent">📌 Örnek</Badge>}
                   </div>
                   <div className="flex items-center gap-1 text-xs text-text3">
                     <MapPin size={12} />

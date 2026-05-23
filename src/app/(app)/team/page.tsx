@@ -10,6 +10,7 @@ import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
+import { confirmAction } from "@/components/ui/confirm";
 import { TableWrap, Table, THead, TBody, TR, TH, TD, Empty } from "@/components/ui/table";
 import { formatDate } from "@/lib/utils";
 import type { Role } from "@/lib/store/types";
@@ -123,8 +124,14 @@ export default function TeamPage() {
                       <div className="flex justify-end">
                         {!user?.isSuperAdmin && member.userId !== currentUser?.id && (
                           <button
-                            onClick={() => {
-                              if (confirm("Üye projeden çıkarılsın mı?")) removeMember(member.id);
+                            onClick={async () => {
+                              if (await confirmAction({
+                                title: "Üye çıkarılsın mı?",
+                                message: "Bu üye projeden çıkarılır. Hesabı silinmez, tekrar davet edilebilir.",
+                                confirmText: "Çıkart",
+                              })) {
+                                removeMember(member.id);
+                              }
                             }}
                             className="p-1 text-text3 hover:text-red rounded"
                           >

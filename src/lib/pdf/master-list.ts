@@ -252,6 +252,11 @@ async function _renderMasterListPDF(opts: MasterPDFOptions): Promise<void> {
       const imgMmH = sliceH / pxPerMm;
       pdf.addImage(imgData, "PNG", marginX, bodyTop, contentW, imgMmH);
 
+      // Slice canvas'ı bellekten serbest bırak — büyük WBS'lerde tarayıcı çökmesin
+      sctx.clearRect(0, 0, slice.width, slice.height);
+      slice.width = 0;
+      slice.height = 0;
+
       yOffset = safeEnd;
       pageNo++;
       if (pageNo > 30) break;

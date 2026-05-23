@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
+import { confirmAction } from "@/components/ui/confirm";
 import { formatDate, uid, toISODate, addDays } from "@/lib/utils";
 
 export default function SharePage() {
@@ -33,9 +34,14 @@ export default function SharePage() {
     });
   }
 
-  function revoke() {
+  async function revoke() {
     if (!project) return;
-    if (!confirm("Public link iptal edilsin mi?")) return;
+    if (!(await confirmAction({
+      title: "Public link iptal edilsin mi?",
+      message: "Mevcut paylaşım linki devre dışı kalır. Bu link ile sayfayı açanlar artık erişemez.",
+      danger: true,
+      confirmText: "İptal Et",
+    }))) return;
     updateProject(project.id, {
       publicShareToken: null,
       publicShareExpiresAt: null,

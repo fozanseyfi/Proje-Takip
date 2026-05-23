@@ -17,6 +17,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { confirmAction } from "@/components/ui/confirm";
 import { TableWrap, Table, THead, TBody, TR, TH, TD, Empty } from "@/components/ui/table";
 import { MultiSelectFilter } from "@/components/ui/multi-select-filter";
 import { formatDate, toISODate, cn } from "@/lib/utils";
@@ -502,8 +503,12 @@ export default function TeamPersonnelPage() {
                             <span>{endText}</span>
                             {isActive && (
                               <button
-                                onClick={() => {
-                                  if (confirm(`${r.personnel.firstName} ${r.personnel.lastName} bu projeden çıkartılsın mı?`)) {
+                                onClick={async () => {
+                                  if (await confirmAction({
+                                    title: `${r.personnel.firstName} ${r.personnel.lastName} çıkartılsın mı?`,
+                                    message: "Bu personel projeden çıkarılır. Master listede kalır.",
+                                    confirmText: "Çıkart",
+                                  })) {
                                     unassignPersonnel(a.id);
                                   }
                                 }}

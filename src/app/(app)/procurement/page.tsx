@@ -22,6 +22,7 @@ import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
 import { useToast } from "@/components/ui/toast";
+import { confirmAction } from "@/components/ui/confirm";
 import { formatDate, formatMoney, formatNumber, cn, toISODate } from "@/lib/utils";
 import type { ProcurementItem } from "@/lib/store/types";
 import type { Currency } from "@/lib/utils";
@@ -443,8 +444,15 @@ export default function ProcurementPage() {
                     item={it}
                     onEdit={() => setEditing(it)}
                     onActualize={() => setActualizing(it)}
-                    onDelete={() => {
-                      if (confirm(`"${it.material}" silinsin mi?`)) del(it.id);
+                    onDelete={async () => {
+                      if (await confirmAction({
+                        title: `"${it.material}" silinsin mi?`,
+                        message: "Satın alma kaydı kalıcı olarak silinecek.",
+                        danger: true,
+                        confirmText: "Sil",
+                      })) {
+                        del(it.id);
+                      }
                     }}
                     onToggleCritical={() => toggleCritical(it)}
                   />

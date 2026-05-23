@@ -351,6 +351,11 @@ async function _renderWbsToPDF(
       const imgMmH = sliceH / pxPerMm;
       pdf.addImage(imgData, "PNG", MARGIN_MM, MARGIN_MM, contentW, imgMmH);
 
+      // Slice canvas'ı bellekten serbest bırak — büyük WBS'lerde tarayıcı çökmesin
+      ctx.clearRect(0, 0, slice.width, slice.height);
+      slice.width = 0;
+      slice.height = 0;
+
       yOffset += pageHpx;
       pageNo++;
     }

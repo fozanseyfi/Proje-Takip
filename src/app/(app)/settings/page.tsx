@@ -9,6 +9,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Alert } from "@/components/ui/alert";
+import { confirmAction } from "@/components/ui/confirm";
 import { addDays, toISODate } from "@/lib/utils";
 import type { Currency } from "@/lib/utils";
 import type { Project } from "@/lib/store/types";
@@ -166,12 +167,12 @@ export default function SettingsPage() {
         {project.isDemo ? (
           <Button
             variant="outline"
-            onClick={() => {
-              if (
-                confirm(
-                  `"${project.name}" projesi örnek modundan çıkarılsın mı? Yeniden düzenlenebilir hale gelir.`
-                )
-              ) {
+            onClick={async () => {
+              if (await confirmAction({
+                title: "Örnek modu kapatılsın mı?",
+                message: `"${project.name}" projesi örnek modundan çıkarılır ve yeniden düzenlenebilir hâle gelir.`,
+                confirmText: "Kapat",
+              })) {
                 setProjectDemo(project.id, false);
                 toast("Örnek modu kapatıldı — proje yeniden düzenlenebilir", "success");
               }
@@ -182,12 +183,12 @@ export default function SettingsPage() {
         ) : (
           <Button
             variant="accent"
-            onClick={() => {
-              if (
-                confirm(
-                  `"${project.name}" projesi örnek olarak işaretlensin mi? Bu sayfada yazma aksiyonları kilitlenecek.`
-                )
-              ) {
+            onClick={async () => {
+              if (await confirmAction({
+                title: "Örnek olarak işaretle",
+                message: `"${project.name}" projesi örnek olarak işaretlenecek. Yazma aksiyonları kilitlenir, kayıt değişmez.`,
+                confirmText: "İşaretle",
+              })) {
                 setProjectDemo(project.id, true);
                 toast("Proje örnek olarak işaretlendi — kilit aktif", "success");
               }
@@ -211,8 +212,13 @@ export default function SettingsPage() {
         </Alert>
         <Button
           variant="danger"
-          onClick={() => {
-            if (confirm(`"${project.name}" projesi ve tüm verileri silinsin mi?`)) {
+          onClick={async () => {
+            if (await confirmAction({
+              title: "Projeyi sil",
+              message: `"${project.name}" projesi ve tüm verileri (WBS, planlama, gerçekleşme, puantaj, faturalar, vb.) kalıcı olarak silinecek. Bu işlem geri alınamaz.`,
+              danger: true,
+              confirmText: "Projeyi Sil",
+            })) {
               deleteProject(project.id);
             }
           }}

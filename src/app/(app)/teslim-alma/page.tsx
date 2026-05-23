@@ -45,18 +45,33 @@ export default function TeslimAlmaPage() {
   const updateMeta = useStore((s) => s.updateTeslimAlmaMeta);
   const resetReport = useStore((s) => s.resetTeslimAlmaReport);
   const addLookahead = useStore((s) => s.addLookahead);
-  const existingLookahead = useStore((s) =>
-    s.currentProjectId ? s.lookahead.filter((l) => l.projectId === s.currentProjectId) : []
-  );
+  // ÖNEMLİ: Zustand selector'unda her render'da yeni array dönmemek için lookahead
+  // tüm listesi alıp filtreyi useMemo'da yapıyoruz. Aksi takdirde her store update'inde
+  // referansı değişir ve gereksiz re-render'lar olur (worst case: infinite loop ima).
+  const allLookahead = useStore((s) => s.lookahead);
   const toast = useToast((p) => p.push);
 
   const [filterMode, setFilterMode] = useState<"all" | "pending" | "issues">("all");
   const [pdfBusy, setPdfBusy] = useState<"blank" | "filled" | "ncr" | null>(null);
 
+  // Bugünün tarihi — bir kere hesaplanır, render'lar arası kararlı.
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
   // Rapor yoksa boş yapı kullan (hook'ların altında erken çıkış için)
   // useMemo'lar her render'da çağrılmalı — koşulsuz.
   const items = useMemo(() => report?.items ?? {}, [report?.items]);
-  const meta = report?.meta ?? { inspectionDate: new Date().toISOString().slice(0, 10) };
+  // meta — kararlı obje (her render'da yeni obje üretmek hidrasyon mismatch yapabilir)
+  const meta = useMemo(
+    () => report?.meta ?? { inspectionDate: todayIso },
+    [report?.meta, todayIso]
+  );
+
+  // Mevcut projeye ait lookahead — useMemo ile filtre (selector'da yapmıyoruz).
+  const existingLookahead = useMemo(() => {
+    const pid = project?.id;
+    if (!pid) return [];
+    return allLookahead.filter((l) => l.projectId === pid);
+  }, [allLookahead, project?.id]);
 
   // Sayım
   const counts = useMemo(() => {

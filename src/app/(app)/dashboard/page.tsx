@@ -34,7 +34,7 @@ import {
   useProjectRealized,
 } from "@/lib/store";
 import { computeProgress, buildSCurve, getAllDates } from "@/lib/calc/progress";
-import { computeForecast, buildForecastCurve, getConfidenceTier } from "@/lib/calc/forecast";
+import { computeForecast, buildForecastCurve, computeEarnedSchedule, getConfidenceTier } from "@/lib/calc/forecast";
 import {
   ProcurementKpiStrip,
   computeProcurementKpis,
@@ -123,8 +123,18 @@ export default function DashboardPage() {
     const { planPct, realPct, spi } = computeProgress(items, planned, realized, project.reportDate);
     const baseCurve = buildSCurve(items, planned, realized, project.reportDate);
 
-    // EVM tahmin — SPI bazlı, raporlama tarihinden 100'e ekstrapolasyon
+    // EVM tahmin — klasik SPI bazlı (EV/PV), raporlama tarihinden 100'e ekstrapolasyon
     const forecast = computeForecast(
+      leafItems,
+      planned,
+      realized,
+      project.reportDate,
+      project.startDate,
+      project.plannedEnd
+    );
+    // Earned Schedule (Lipke 2003) — modern PMP zaman-bazlı SPI
+    // Klasik SPI'nin %85+ patolojisini düzeltir (proje sonunda hep 1'e gider sorunu)
+    const earnedSchedule = computeEarnedSchedule(
       leafItems,
       planned,
       realized,
@@ -164,7 +174,7 @@ export default function DashboardPage() {
 
     const sections = computeSectionProgress(wbs, planned, realized, project.reportDate, 1);
     const allDates = getAllDates(planned, realized);
-    return { planPct, realPct, spi, sCurve, sections, allDates, forecast };
+    return { planPct, realPct, spi, sCurve, sections, allDates, forecast, earnedSchedule };
   }, [wbs, planned, realized, project.reportDate, project.startDate, project.plannedEnd]);
 
   const elapsed = Math.max(0, daysBetween(project.startDate, project.reportDate) + 1);
@@ -344,7 +354,7 @@ export default function DashboardPage() {
       </div>
 
       {/* KPI STRIP */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3 sm:gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 sm:gap-4 mb-6">
         <KpiBig
           icon={<Target size={16} />}
           iconBg="blue"
@@ -513,6 +523,62 @@ export default function DashboardPage() {
                   </span>
                 }
                 delay={7}
+              />
+              {/* Earned Schedule (Lipke 2003) — modern PMP zaman-bazlı tahmin.
+                  Klasik SPI'nin %85+ patolojisini düzeltir. */}
+              <KpiBig
+                icon={<Target size={16} />}
+                iconBg="green"
+                label="Tahmini Bitiş (ES)"
+                value={
+                  hide || stats.earnedSchedule.forecastEndES == null
+                    ? "—"
+                    : formatDate(stats.earnedSchedule.forecastEndES)
+                }
+                valueColor={
+                  hide || stats.earnedSchedule.forecastEndES == null
+                    ? "text-text3"
+                    : stats.earnedSchedule.deltaDaysES <= 0
+                      ? "text-green"
+                      : stats.earnedSchedule.deltaDaysES <= 7
+                        ? "text-yellow"
+                        : "text-red"
+                }
+                sub={
+                  hide ? (
+                    <span className="text-[10px] text-text3">
+                      Modern PMP (Earned Schedule)
+                    </span>
+                  ) : (
+                    <span
+                      className="flex items-center gap-1 text-[10px] text-text3 font-mono"
+                      title={`Earned Schedule (Lipke 2003) — SPI(t) = ES/AT, klasik SPI'nin %85+ patolojisini düzeltir.\nES: ${stats.earnedSchedule.es.toFixed(1)} gün\nAT: ${stats.earnedSchedule.at} gün\nSV(t): ${stats.earnedSchedule.svt.toFixed(1)} gün`}
+                    >
+                      SPI(t){" "}
+                      <span className="text-text font-bold">
+                        {stats.earnedSchedule.spit != null
+                          ? stats.earnedSchedule.spit.toFixed(2)
+                          : "—"}
+                      </span>
+                      {stats.earnedSchedule.deltaDaysES !== 0 && (
+                        <>
+                          <span className="text-text3 mx-1">·</span>
+                          <span
+                            className={
+                              stats.earnedSchedule.deltaDaysES <= 0
+                                ? "text-green font-bold"
+                                : "text-red font-bold"
+                            }
+                          >
+                            {stats.earnedSchedule.deltaDaysES >= 0 ? "+" : ""}
+                            {stats.earnedSchedule.deltaDaysES}g
+                          </span>
+                        </>
+                      )}
+                    </span>
+                  )
+                }
+                delay={8}
               />
             </>
           );
@@ -1198,7 +1264,7 @@ function KpiBig({
   bar?: number;
   barColor?: string;
   sub?: React.ReactNode;
-  delay?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  delay?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 }) {
   const delayCls =
     delay === 1

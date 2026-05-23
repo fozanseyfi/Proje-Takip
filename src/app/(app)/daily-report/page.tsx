@@ -12,8 +12,11 @@ import {
   Camera,
   X,
   Save,
+  RefreshCw,
+  Wind,
+  Droplets,
 } from "lucide-react";
-import { useStore, useCurrentProject, useCurrentUser } from "@/lib/store";
+import { useStore, useCurrentProject, useCurrentUser, useProjectWbs, useProjectRealized } from "@/lib/store";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardTitle } from "@/components/ui/card";
@@ -22,22 +25,9 @@ import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
 import { formatDate, toISODate, daysBetween } from "@/lib/utils";
+import { fetchWeatherDayCached, type WeatherDay } from "@/lib/data/weather";
 
-// Mock hava durumu — gerçek API entegrasyonunda Open-Meteo kullanılacak
-function mockWeather(date: string) {
-  const seed = date.split("-").reduce((s, p) => s + Number(p), 0);
-  const conditions = ["Güneşli", "Parçalı Bulutlu", "Bulutlu", "Yağmurlu", "Karlı"];
-  const idx = seed % conditions.length;
-  const condition = conditions[idx];
-  const tempMin = 5 + (seed % 15);
-  const tempMax = tempMin + 5 + (seed % 10);
-  return {
-    condition,
-    tempMin,
-    tempMax,
-    workStopped: condition === "Yağmurlu" || condition === "Karlı",
-  };
-}
+// Hava durumu artık Open-Meteo'dan gerçek zamanlı çekiliyor — bkz. fetchWeatherDayCached
 
 function weatherIcon(condition?: string) {
   if (!condition) return <Cloud size={18} />;
@@ -54,6 +44,8 @@ export default function DailyReportPage() {
   const upsertReport = useStore((s) => s.upsertDailyReport);
   const personnelAttendance = useStore((s) => s.personnelAttendance);
   const machineAttendance = useStore((s) => s.machineAttendance);
+  const wbs = useProjectWbs(project?.id);
+  const realized = useProjectRealized(project?.id);
 
   const [date, setDate] = useState(toISODate(new Date()));
 
@@ -72,7 +64,10 @@ export default function DailyReportPage() {
     [reports, project, date]
   );
 
-  const weather = useMemo(() => existing?.weather ? null : mockWeather(date), [date, existing]);
+  // Open-Meteo'dan asenkron hava durumu — proje konumu varsa otomatik çek
+  const [weather, setWeather] = useState<WeatherDay | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState<string | null>(null);
 
   const [summary, setSummary] = useState("");
   const [issues, setIssues] = useState("");
@@ -81,16 +76,58 @@ export default function DailyReportPage() {
   const [workStopped, setWorkStopped] = useState(false);
   const [workStoppedReason, setWorkStoppedReason] = useState("");
 
+  // Hava durumunu çek — sadece koordinat varsa ve "existing weather" yoksa
+  useEffect(() => {
+    setWeatherError(null);
+    if (!project || existing?.weather) {
+      setWeather(null);
+      return;
+    }
+    if (project.latitude == null || project.longitude == null) {
+      // Koordinat yok — uyarı göster, hava otomatik dolmasın
+      setWeather(null);
+      setWeatherError("Proje ayarlarında enlem/boylam tanımlı değil — hava otomatik çekilemez");
+      return;
+    }
+    let cancelled = false;
+    setWeatherLoading(true);
+    fetchWeatherDayCached(project.latitude, project.longitude, date)
+      .then((w) => {
+        if (!cancelled) setWeather(w);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setWeather(null);
+          setWeatherError(err instanceof Error ? err.message : "Hava durumu alınamadı");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setWeatherLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project, date, existing?.weather]);
+
   // Tarihten existing'i ilkleme — state'i resetle
   useEffect(() => {
     setSummary(existing?.summary ?? "");
     setIssues(existing?.issues ?? "");
     setTomorrowPlan(existing?.tomorrowPlan ?? "");
     setPhotos(existing?.photos ?? []);
-    setWorkStopped(existing?.workStopped ?? weather?.workStopped ?? false);
+    setWorkStopped(existing?.workStopped ?? false);
     setWorkStoppedReason(existing?.workStoppedReason ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, existing?.id]);
+
+  // Hava durumu yüklendikten sonra workStopped'ı otomatik aktive et (yalnız existing yoksa)
+  useEffect(() => {
+    if (!weather || existing) return;
+    if (weather.workStopped) {
+      setWorkStopped(true);
+      setWorkStoppedReason(weather.workStoppedReason);
+    }
+  }, [weather, existing]);
 
   function onPhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
@@ -186,6 +223,22 @@ export default function DailyReportPage() {
     );
   }
 
+  async function downloadDCR() {
+    if (!project) return;
+    const { downloadDCRPDF } = await import("@/lib/pdf/dcr");
+    await downloadDCRPDF({
+      project,
+      report: existing,
+      date,
+      personnelAttendance,
+      machineAttendance,
+      wbs,
+      realized,
+      preparedBy: user?.fullName,
+    });
+    toast("DCR PDF indirildi", "success");
+  }
+
   return (
     <>
       <PageHeader
@@ -193,9 +246,14 @@ export default function DailyReportPage() {
         description={`Sahada günlük durum raporu`}
         icon={FileText}
         actions={
-          <Button variant="accent" onClick={save}>
-            <Save size={14} /> Kaydet
-          </Button>
+          <>
+            <Button variant="outline" onClick={downloadDCR} disabled={!existing && !summary} title="Daily Construction Report — saha mühendisinin imzalanan tek-sayfa A4 raporu">
+              <FileText size={14} /> DCR PDF
+            </Button>
+            <Button variant="accent" onClick={save}>
+              <Save size={14} /> Kaydet
+            </Button>
+          </>
         }
       />
 
@@ -248,19 +306,67 @@ export default function DailyReportPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card>
-          <CardTitle>Hava Durumu</CardTitle>
+          <CardTitle>
+            Hava Durumu
+            {weather && (
+              <span className="ml-auto text-[10px] text-text3 font-mono">Open-Meteo</span>
+            )}
+          </CardTitle>
           <div className="space-y-2">
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-bg3">
-              {weatherIcon(existing?.weather ?? weather?.condition)}
-              <div>
-                <div className="font-medium">{existing?.weather ?? weather?.condition}</div>
-                <div className="text-xs text-text3 font-mono">
-                  {existing?.temperatureMin ?? weather?.tempMin}°C —{" "}
-                  {existing?.temperatureMax ?? weather?.tempMax}°C
+            {weatherLoading ? (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-bg3 text-text3 text-sm">
+                <RefreshCw size={14} className="animate-spin" />
+                Hava verisi alınıyor…
+              </div>
+            ) : weatherError && !existing?.weather ? (
+              <div className="p-3 rounded-lg bg-yellow/10 border border-yellow/30 text-yellow-dark text-xs">
+                <strong>⚠ Otomatik hava yok:</strong> {weatherError}
+                <div className="mt-1 text-text3">
+                  Hava bilgilerini manuel girebilir veya{" "}
+                  <a href="/settings" className="text-accent underline">
+                    proje ayarları
+                  </a>
+                  &apos;ndan enlem/boylam ekleyebilirsin.
                 </div>
               </div>
-              <Badge variant="accent" className="ml-auto">otomatik</Badge>
-            </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-bg3">
+                  {weatherIcon(existing?.weather ?? weather?.condition)}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium">{existing?.weather ?? weather?.condition ?? "—"}</div>
+                    <div className="text-xs text-text3 font-mono">
+                      {existing?.temperatureMin ?? weather?.tempMin ?? "—"}°C —{" "}
+                      {existing?.temperatureMax ?? weather?.tempMax ?? "—"}°C
+                    </div>
+                  </div>
+                  {weather && (
+                    <Badge variant={existing?.weather ? "gray" : "accent"} className="ml-auto">
+                      {existing?.weather ? "kayıtlı" : "otomatik"}
+                    </Badge>
+                  )}
+                </div>
+                {/* Detay satırı — sadece otomatik veride */}
+                {weather && !existing?.weather && (
+                  <div className="flex items-center gap-3 px-3 py-1.5 text-[11px] text-text2 flex-wrap">
+                    <span className="inline-flex items-center gap-1" title="Günlük toplam yağış">
+                      <Droplets size={11} className="text-blue" />
+                      <span className="font-mono">{weather.precipitation.toFixed(1)} mm</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1" title="Maks. rüzgar hızı">
+                      <Wind size={11} className="text-text3" />
+                      <span className="font-mono">{weather.windMax} km/h</span>
+                    </span>
+                  </div>
+                )}
+                {/* İş durdu otomatik bilgilendirme */}
+                {weather?.workStopped && !existing?.weather && (
+                  <Alert variant="warning" className="!py-2 !text-xs">
+                    ⚠ Otomatik tespit: <strong>{weather.workStoppedReason}</strong> — iş durdu bayrağı aktif edildi
+                  </Alert>
+                )}
+              </>
+            )}
             <label className="flex items-center gap-2 cursor-pointer text-sm">
               <input
                 type="checkbox"

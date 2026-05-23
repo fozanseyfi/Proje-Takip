@@ -3,13 +3,26 @@
  *
  * Schedule-EVM kullanır (cost-bazlı CPI/AC/EAC$ yok — actual cost tutarlı izlenmiyor).
  *
- * Metrikler:
+ * Geleneksel metrikler (computeForecast):
  *   PV (Planned Value)        — bu tarihe kadar PLANLA göre yapılması gereken % (0..1)
  *   EV (Earned Value)         — bu tarihe kadar gerçekten kazanılan % (0..1)
  *   SV (Schedule Variance)    — EV − PV (negatif = gerideyiz)
  *   SPI (Schedule Perf. Idx.) — EV / PV (1 = zamanında, <1 = geride, >1 = önde)
  *   Tahmini Bitiş             — startDate + originalDuration / SPI
  *   Sapma (gün)               — tahmini bitiş − planlanan bitiş
+ *
+ * Earned Schedule (Lipke, 2003) — modern PMP standardı (computeEarnedSchedule):
+ *   AT (Actual Time)          — startDate'ten filterDate'e kadar geçen gün
+ *   ES (Earned Schedule)      — EV'ye PV eğrisinde ulaşılması gereken zaman (gün)
+ *                              PV eğrisinde EV'yi geçen ilk noktanın lineer
+ *                              interpolasyonu ile bulunur
+ *   SV(t)                     — ES − AT (gün) · negatif = gerideyiz
+ *   SPI(t)                    — ES / AT (zamana göre normalize) · klasik SPI'nin
+ *                              %85+ patolojisini düzeltir (proje sona yaklaşırken
+ *                              klasik SPI hep 1'e gider, SPI(t) ise sapmayı korur)
+ *   IEAC(t)                   — Independent Estimate at Completion (time)
+ *                              = PD / SPI(t)
+ *   Tahmini Bitiş (ES)        — startDate + IEAC(t)
  */
 
 import type { DateQuantityMap } from "@/lib/store/types";
@@ -71,6 +84,107 @@ export function computeForecast(
     plannedDurationDays,
   };
 }
+
+// ────────────────────────────────────────────────────────────────────
+// Earned Schedule (Lipke 2003) — modern PMP zaman-bazlı SPI
+// ────────────────────────────────────────────────────────────────────
+
+export interface EarnedScheduleResult {
+  /** Geçen süre (gün) — startDate'ten filterDate'e */
+  at: number;
+  /** Earned Schedule (gün) — EV'ye PV eğrisinde ulaşılması gereken zaman */
+  es: number;
+  /** SV(t) = ES − AT (gün). Negatif = gerideyiz. */
+  svt: number;
+  /** SPI(t) = ES / AT. null = AT sıfır. Klasik SPI'nin %85+ patolojisini düzeltir. */
+  spit: number | null;
+  /** Independent Estimate at Completion (time) = PD / SPI(t). null = SPI(t) yoksa. */
+  ieact: number | null;
+  /** Tahmini bitiş tarihi (ES'e dayalı). */
+  forecastEndES: string | null;
+  /** Tahmini bitiş − planlanan bitiş (gün) */
+  deltaDaysES: number;
+  /** Planlanan süre */
+  plannedDurationDays: number;
+}
+
+/**
+ * PV S-curve'de hedef değere (EV) lineer interpolasyonla ulaşılan zamanı (gün) döner.
+ * Curve'ün sondaki PV genellikle 100 — EV ≥ son PV ise projectDuration döner (önde).
+ *
+ * Curve formatı: [{ date, planPct (0..100) }, ...] sıralı.
+ */
+function interpolatePvTime(
+  curve: SCurvePoint[],
+  evPct: number, // 0..100
+  projectStart: string
+): number {
+  if (curve.length === 0 || evPct <= 0) return 0;
+  // İlk geçen noktayı bul
+  for (let i = 1; i < curve.length; i++) {
+    const prev = curve[i - 1];
+    const cur = curve[i];
+    if (cur.planPct >= evPct) {
+      // prev.planPct < evPct ≤ cur.planPct — lineer interpolasyon
+      const dPv = cur.planPct - prev.planPct;
+      const tPrev = daysBetween(projectStart, prev.date) + 1;
+      const tCur = daysBetween(projectStart, cur.date) + 1;
+      const dT = tCur - tPrev;
+      if (dPv <= 0) return tCur; // PV değişmemiş (flat) — son noktayı dön
+      const ratio = (evPct - prev.planPct) / dPv;
+      return tPrev + ratio * dT;
+    }
+  }
+  // Hiç geçmedi → EV planlanan max'tan büyük (önde) → curve sonundaki AT döner
+  const last = curve[curve.length - 1];
+  return daysBetween(projectStart, last.date) + 1;
+}
+
+export function computeEarnedSchedule(
+  items: WbsItemForCalc[],
+  planned: DateQuantityMap,
+  realized: DateQuantityMap,
+  filterDate: string,
+  projectStart: string,
+  plannedEnd: string
+): EarnedScheduleResult {
+  const { realPct: ev } = computeProgress(items, planned, realized, filterDate);
+  const at = Math.max(0, daysBetween(projectStart, filterDate) + 1);
+  const plannedDurationDays = Math.max(1, daysBetween(projectStart, plannedEnd) + 1);
+
+  // PV curve'ünü ELDE EDERKEN filterDate sonrasını da dahil et — EV önde olabilir,
+  // ES'i projeden büyük gösterebiliriz.
+  const curve = buildSCurve(items, planned, realized);
+  // curve.planPct zaten 0..100 cinsinden
+
+  const evPct = ev * 100;
+  const es = interpolatePvTime(curve, evPct, projectStart);
+  const svt = es - at;
+  const spit = at > 0 ? es / at : null;
+
+  let ieact: number | null = null;
+  let forecastEndES: string | null = null;
+  let deltaDaysES = 0;
+  if (spit && spit > 0) {
+    ieact = plannedDurationDays / spit;
+    const fe = addDays(new Date(projectStart), Math.round(ieact) - 1);
+    forecastEndES = toISODate(fe);
+    deltaDaysES = daysBetween(plannedEnd, forecastEndES);
+  }
+
+  return {
+    at,
+    es,
+    svt,
+    spit,
+    ieact,
+    forecastEndES,
+    deltaDaysES,
+    plannedDurationDays,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────
 
 export interface ForecastCurvePoint {
   date: string;

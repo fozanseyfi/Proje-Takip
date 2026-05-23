@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ShoppingCart,
   Plus,
@@ -241,7 +241,7 @@ export default function ProcurementPage() {
         pdf.setFont("Geist", "bold");
         pdf.setFontSize(10);
         pdf.setTextColor(255, 255, 255);
-        let val = c.value;
+        const val = c.value;
         const maxW = cardW - 6;
         if (pdf.getTextWidth(val) > maxW) {
           let fs = 10;
@@ -887,8 +887,8 @@ function ActualizeDialog({
   const [actualNotes, setActualNotes] = useState("");
   const [newStatus, setNewStatus] = useState<ProcurementItem["status"]>("teslim");
 
-  // Item değişince state'i doldur
-  useMemo(() => {
+  // Item değişince form state'ini doldur — useEffect ile (useMemo side-effect için yanlış)
+  useEffect(() => {
     if (item) {
       setActualPoDate(item.actualPoDate ?? "");
       setActualExwDate(item.actualExwDate ?? "");

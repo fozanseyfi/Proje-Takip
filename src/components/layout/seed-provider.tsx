@@ -28,7 +28,7 @@ export function SeedProvider({ children }: { children: React.ReactNode }) {
 
     return () => unsub();
     // Dependency array boş — bu effect sadece mount'ta çalışır
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   if (!hydrated) {

@@ -569,7 +569,7 @@ export default function PlanStatusPage() {
         pdf.setTextColor(255, 255, 255);
         // Uzun değerleri sığdır
         const maxW = cardW - 6;
-        let val = c.value;
+        const val = c.value;
         const valW = pdf.getTextWidth(val);
         if (valW > maxW) {
           // font'u küçült

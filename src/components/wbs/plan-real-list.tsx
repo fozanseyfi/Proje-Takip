@@ -260,10 +260,10 @@ export function PlanRealList({
                 </td>
               </tr>
             ) : (
-              filtered.map((r, i) => {
+              filtered.map((r) => {
                 const pay = r.quantity > 0 ? (r.qty / r.quantity) * 100 : 0;
                 return (
-                  <tr key={i} className={cn("hover:bg-bg2/40", filterDate && filterDate === r.date && cellBgClass)}>
+                  <tr key={`${r.code}-${r.date}`} className={cn("hover:bg-bg2/40", filterDate && filterDate === r.date && cellBgClass)}>
                     <td className="px-4 py-2 border-b border-border font-mono text-xs text-text2 whitespace-nowrap">
                       {formatDate(r.date)}
                     </td>

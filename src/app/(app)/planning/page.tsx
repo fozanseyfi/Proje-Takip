@@ -446,7 +446,7 @@ export default function PlanningPage() {
   useEffect(() => {
     if (!didInitExpand && tree.rows.length > 0) {
       setExpanded(presetExpand(tree.rows, "leaf")); // eslint-disable-line react-hooks/set-state-in-effect
-      setDidInitExpand(true); // eslint-disable-line react-hooks/set-state-in-effect
+      setDidInitExpand(true);  
     }
   }, [tree.rows, didInitExpand]);
 
@@ -454,7 +454,7 @@ export default function PlanningPage() {
   const lastTreeRowCount = useRef(0);
   useEffect(() => {
     if (didInitExpand && tree.rows.length > lastTreeRowCount.current) {
-      setExpanded(presetExpand(tree.rows, "leaf")); // eslint-disable-line react-hooks/set-state-in-effect
+      setExpanded(presetExpand(tree.rows, "leaf"));  
     }
     lastTreeRowCount.current = tree.rows.length;
   }, [tree.rows, didInitExpand]);
@@ -1118,7 +1118,7 @@ export default function PlanningPage() {
         pdf.setFontSize(11);
         pdf.setTextColor(255, 255, 255);
         const maxW = cardW - 6;
-        let val = c.value;
+        const val = c.value;
         if (pdf.getTextWidth(val) > maxW) {
           let fs = 11;
           while (fs > 7 && pdf.getTextWidth(val) > maxW) {
@@ -4389,7 +4389,7 @@ function SuggestionsPanel({
                     <span className="text-text2">Döngü {ci + 1}:</span>
                     <span className="font-mono text-red font-bold">
                       {codes.map((c, i) => (
-                        <span key={i}>
+                        <span key={`${ci}-${c}-${i}`}>
                           {c}
                           {i < codes.length - 1 && <span className="text-text3 mx-1">→</span>}
                         </span>

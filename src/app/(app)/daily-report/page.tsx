@@ -301,7 +301,7 @@ export default function DailyReportPage() {
           {photos.length > 0 && (
             <div className="grid grid-cols-3 gap-2 mt-3">
               {photos.map((p, i) => (
-                <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-border">
+                <div key={p.uploadedAt + i} className="relative aspect-square rounded-lg overflow-hidden border border-border">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={p.url} alt={p.caption || `Foto ${i + 1}`} className="w-full h-full object-cover" />
                   <button

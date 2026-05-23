@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Save,
@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Copy,
   FileText,
+  Keyboard,
 } from "lucide-react";
 import {
   useStore,
@@ -83,6 +84,51 @@ export default function RealizationPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date]);
 
+  // ─── Klavye kısayolları ───
+  // useRef pattern ile stale closure'ı önle — son fonksiyonlar her render'da güncellenir.
+  const actionsRef = useRef({
+    saveAll: () => {},
+    shiftDate: (_d: number) => {},
+    copyFromYesterday: () => {},
+  });
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      // Modal / dialog açıkken kısayolları devre dışı bırak (genel)
+      if (document.querySelector('[role="dialog"]')) return;
+
+      // Ctrl/Cmd + S → Kaydet
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        actionsRef.current.saveAll();
+        return;
+      }
+      // Alt + ← / → → tarih geri/ileri
+      // Input içinde değilse veya input'tan farklı bir element'teyse çalışır.
+      const target = e.target as HTMLElement | null;
+      const inInput = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          actionsRef.current.shiftDate(-1);
+          return;
+        }
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          actionsRef.current.shiftDate(1);
+          return;
+        }
+        if (e.key.toLowerCase() === "c" && !inInput) {
+          e.preventDefault();
+          actionsRef.current.copyFromYesterday();
+          return;
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   if (!project) {
     return (
       <Card>
@@ -153,6 +199,9 @@ export default function RealizationPage() {
     }
     toast(`${formatDate(date)} kaydedildi · ${count} kayıt güncellendi`, "success");
   }
+
+  // Klavye kısayolları için ref'i her render'da güncel tut — stale closure önler
+  actionsRef.current = { saveAll, shiftDate, copyFromYesterday };
 
   // Saha formu PDF — html2canvas + jsPDF ile düzgün Türkçe karakter desteği
   async function downloadFieldFormPDF() {
@@ -362,6 +411,20 @@ export default function RealizationPage() {
         icon={CheckCircle2}
         actions={
           <>
+            <div
+              className="hidden md:inline-flex items-center gap-1.5 px-2.5 h-9 rounded-md text-[11px] text-text3 border border-border bg-bg2/40"
+              title="Klavye kısayolları"
+            >
+              <Keyboard size={12} />
+              <kbd className="font-mono bg-white border border-border rounded px-1.5 py-0.5 text-[10px] font-bold">Ctrl+S</kbd>
+              <span>kaydet</span>
+              <span className="text-text3/50">·</span>
+              <kbd className="font-mono bg-white border border-border rounded px-1.5 py-0.5 text-[10px] font-bold">Alt+←/→</kbd>
+              <span>gün</span>
+              <span className="text-text3/50">·</span>
+              <kbd className="font-mono bg-white border border-border rounded px-1.5 py-0.5 text-[10px] font-bold">Alt+C</kbd>
+              <span>kopya</span>
+            </div>
             <Button variant="outline" onClick={downloadFieldFormPDF}>
               <FileText size={14} /> Saha Formu PDF
             </Button>

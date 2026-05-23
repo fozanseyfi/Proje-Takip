@@ -2783,7 +2783,7 @@ function QuickPlanForm({
                   contextTotal.amount > 0 ? (it.amount / contextTotal.amount) * 100 : 0;
                 return (
                   <tr
-                    key={i}
+                    key={`${it.date}-${it.amount}-${i}`}
                     className={cn(
                       "border-t border-border first:border-t-0",
                       outOfRange && "bg-red/5"

@@ -1052,8 +1052,8 @@ export default function DashboardPage() {
             <p className="text-sm text-text3 py-6 text-center">Son 5 günde gerçekleşme kaydı yok.</p>
           ) : (
             <div className="max-h-72 overflow-y-auto p-3 space-y-1.5">
-              {recentRealizations.slice(0, 12).map((r, i) => (
-                <div key={i} className="flex items-center gap-2 py-1.5 px-2 hover:bg-bg2 rounded text-sm">
+              {recentRealizations.slice(0, 12).map((r) => (
+                <div key={`${r.code}-${r.date}`} className="flex items-center gap-2 py-1.5 px-2 hover:bg-bg2 rounded text-sm">
                   <span className="text-[10px] font-mono text-text3 w-14 shrink-0">{formatDate(r.date).slice(0, 5)}</span>
                   <span className="font-mono text-xs text-text3 shrink-0">{r.code}</span>
                   <span className="truncate flex-1">{r.name}</span>

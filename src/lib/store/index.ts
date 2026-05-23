@@ -35,7 +35,10 @@ import type {
 } from "./types";
 import { DEFAULT_WBS, type WbsTemplateItem } from "@/lib/data/default-wbs";
 import { uid, toISODate } from "@/lib/utils";
-import { buildSamplePayload, SAMPLE_PROJECT_NAME } from "@/lib/data/sample-loader";
+// Sample seed kaldırıldı (2026-05-23) — Ankara Polatlı GES örnek projesi artık
+// yüklenmez. Yeni kullanıcılar boş bir workspace ile başlar; gerçek proje açar.
+// Dosya (sample-loader.ts, sample-pools.ts) repo'da kalıyor — gelecekte demo
+// modu istenirse veya yeniden açılmak istenirse referans olarak.
 
 // ============================================================
 // State shape
@@ -354,16 +357,11 @@ export const useStore = create<StoreState>()(
       seedIfEmpty: () => {
         const s = get();
 
-        // Kullanıcı bir kez seed gördüyse veya wipe etmişse — bir daha asla yükleme
+        // Sample (Ankara Polatlı GES) artık otomatik yüklenmez.
+        // Sadece varsayılan super admin user'ı yarat (giriş için lazım) ve
+        // _seeded işaretini set et — ilk render sonrası boş workspace gösterilir.
         if (s._seeded) return;
 
-        const hasSample = s.projects.some((p) => p.name === SAMPLE_PROJECT_NAME);
-        if (hasSample) {
-          set({ _seeded: true });
-          return;
-        }
-
-        // 1. User yoksa default super admin'i yarat
         let userId = s.currentUserId;
         let users = s.users;
         if (!userId) {
@@ -376,32 +374,9 @@ export const useStore = create<StoreState>()(
           userId = newUser.id;
         }
 
-        // 2. Örnek proje payload'unu üret
-        const p = buildSamplePayload(userId);
-
-        // 3. State'i tek mutation ile güncelle
         set({
           users,
           currentUserId: userId,
-          projects: [...s.projects, p.project],
-          currentProjectId: p.project.id,
-          members: [...s.members, p.member],
-          wbs: [...s.wbs, ...p.wbs],
-          planned: { ...s.planned, [p.project.id]: p.planned },
-          realized: { ...s.realized, [p.project.id]: p.realized },
-          personnelMaster: [...s.personnelMaster, ...p.personnel],
-          personnelAssignments: [...s.personnelAssignments, ...p.personnelAssignments],
-          personnelAttendance: [...s.personnelAttendance, ...p.personnelAttendance],
-          machinesMaster: [...s.machinesMaster, ...p.machines],
-          machineAssignments: [...s.machineAssignments, ...p.machineAssignments],
-          machineAttendance: [...s.machineAttendance, ...p.machineAttendance],
-          dailyReports: [...s.dailyReports, ...p.dailyReports],
-          procurement: [...s.procurement, ...p.procurement],
-          lookahead: [...s.lookahead, ...p.lookahead],
-          budgetCategories: [...s.budgetCategories, ...p.budgetCategories],
-          budgetActuals: [...s.budgetActuals, ...p.budgetActuals],
-          subcontractors: [...s.subcontractors, ...p.subcontractors],
-          billing: [...s.billing, ...p.billing],
           _seeded: true,
         });
       },

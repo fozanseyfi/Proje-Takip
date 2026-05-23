@@ -1,202 +1,293 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { BarChart3, FileDown, Layers3, Layers2, FileText, Loader2 } from "lucide-react";
+/**
+ * Timeline & Gantt — proje BASELINE planının kapsamlı görünümü.
+ *
+ * Veri kaynağı:
+ *   - Planlı: `baseline[projectId]` (PMP onaylı orijinal plan)
+ *             Baseline yoksa fallback olarak `planned` kullanılır.
+ *   - Gerçekleşen: `realized[projectId]`
+ *
+ * Kapsam:
+ *   - Sadece BASELINE'DA MİKTARI GİRİLEN kalemler tablo'da gösterilir.
+ *     (Süre-only kalemler ve milestone'lar tarihsizse gösterilmez.)
+ *   - Realized: yalnız o kalemin baseline'da kaydı varsa altında ikinci bar olarak.
+ *
+ * Filtreler:
+ *   - L1 (Ana Başlıklar) · L2 (Alt Başlıklar) · L3 (İş Kalemleri) chip toggle'ları
+ *   - Kapatılan seviyenin parent rollup'ı da hesaba katılmaz.
+ *
+ * Görselleştirme: BigGantt — read-only, Planlama dokunulmaz.
+ */
+
+import { useMemo, useState } from "react";
+import {
+  BarChart3,
+  FileDown,
+  Info,
+  Layers3,
+  Layers2,
+  FileText,
+  CalendarDays,
+  CheckCircle2,
+} from "lucide-react";
 import {
   useCurrentProject,
   useProjectWbs,
+  useProjectBaseline,
   useProjectPlanned,
   useProjectRealized,
+  useProjectHasBaseline,
+  useProjectBaselineSetAt,
 } from "@/lib/store";
 import { PageHeader } from "@/components/layout/page-header";
-import { Card, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
-import { formatDate, formatPct, toISODate, addDays, daysBetween, cn } from "@/lib/utils";
-import { sumByDateMap } from "@/lib/calc/progress";
-
-const MONTH_LABEL = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
-type Granularity = "day" | "week" | "month";
-
-const LEVEL_COLOR: Record<number, { bar: string; barBg: string; text: string; rowBg: string }> = {
-  1: { bar: "bg-blue",   barBg: "bg-blue/20",   text: "text-blue",   rowBg: "bg-blue/5" },
-  2: { bar: "bg-purple", barBg: "bg-purple/20", text: "text-purple", rowBg: "bg-purple/5" },
-  3: { bar: "bg-accent", barBg: "bg-accent/20", text: "text-accent", rowBg: "" },
-};
-const LEVEL_LABEL: Record<number, string> = {
-  1: "Ana Başlık",
-  2: "Alt Başlık",
-  3: "İş Kalemi",
-};
+import { cn, formatDate, toISODate } from "@/lib/utils";
+import { computeSchedule, getPlanRange, type LeafSchedule } from "@/lib/calc/predecessors";
+import { BigGantt, type TimelineRow } from "@/components/timeline/big-gantt";
+import { WhatIfDialog } from "@/components/planning/whatif-dialog";
+import { loadingOverlay } from "@/lib/ui-loading";
 
 export default function TimelinePage() {
   const project = useCurrentProject();
   const wbs = useProjectWbs(project?.id);
+  const baseline = useProjectBaseline(project?.id);
   const planned = useProjectPlanned(project?.id);
   const realized = useProjectRealized(project?.id);
+  const hasBaseline = useProjectHasBaseline(project?.id);
+  const baselineSetAt = useProjectBaselineSetAt(project?.id);
   const toast = useToast((s) => s.push);
 
-  const [granularity, setGranularity] = useState<Granularity>("week");
+  // ─── Filter state ───
   const [showL1, setShowL1] = useState(true);
   const [showL2, setShowL2] = useState(true);
   const [showL3, setShowL3] = useState(true);
+  // Planlanan / Gerçekleşen seçenekleri — her ikisi de seçilebilir
+  const [showPlan, setShowPlan] = useState(true);
+  const [showRealized, setShowRealized] = useState(true);
+  const [whatIfOpen, setWhatIfOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  const exportRef = useRef<HTMLDivElement>(null);
-
-  // Her node için planlanan/gerçekleşen tarih aralığı.
-  // Parent (L1/L2): descendant leaf'lerin min/max'i (rollup).
-  function findClosestParentCode(code: string): string | undefined {
-    if (!code.includes(".")) return undefined;
-    let p = code.split(".").slice(0, -1).join(".");
-    while (p.length > 0) {
-      if (wbs.some((x) => x.code === p)) return p;
-      if (!p.includes(".")) return undefined;
-      p = p.split(".").slice(0, -1).join(".");
+  // ─── CPM hesabı — baseline üzerinde ───
+  const { schedules, criticalCodes, cycleNodes } = useMemo(() => {
+    if (!project) {
+      return {
+        schedules: new Map<string, LeafSchedule>(),
+        criticalCodes: new Set<string>(),
+        cycleNodes: new Set<string>(),
+      };
     }
-    return undefined;
-  }
+    const r = computeSchedule(wbs, baseline, project.startDate, project.plannedEnd);
+    return {
+      schedules: r.schedules,
+      criticalCodes: r.critical,
+      cycleNodes: r.cycleNodes,
+    };
+  }, [wbs, baseline, project]);
 
-  function descendantLeaves(parentCode: string) {
-    return wbs.filter(
-      (w) => w.isLeaf && w.code !== parentCode && w.code.startsWith(parentCode + ".")
-    );
-  }
+  // ─── Rows: hierarchical (L1/L2/L3) + planlı/realized range + filtreli ───
+  const rows = useMemo<TimelineRow[]>(() => {
+    if (!project) return [];
 
-  const allRows = useMemo(() => {
-    return wbs
-      .filter((w) => w.level > 0) // L0 hariç
-      .map((w) => {
-        let pDates: string[] = [];
-        let rDates: string[] = [];
-        let cumReal = 0;
-        let totalQty = 0;
+    // 1. Leaf'lerin planlı range'i — SADECE baseline'da miktar girilmiş olanlar
+    const leafPlan = new Map<string, { start: string; end: string }>();
+    const leafReal = new Map<string, { start: string; end: string }>();
 
-        if (w.isLeaf) {
-          pDates = Object.keys(planned[w.code] || {});
-          rDates = Object.keys(realized[w.code] || {});
-          cumReal = project ? sumByDateMap(realized, w.code, project.reportDate) : 0;
-          totalQty = w.quantity;
-        } else {
-          // Rollup parent
-          const leaves = descendantLeaves(w.code);
-          for (const l of leaves) {
-            pDates.push(...Object.keys(planned[l.code] || {}));
-            rDates.push(...Object.keys(realized[l.code] || {}));
-            if (project) {
-              cumReal += sumByDateMap(realized, l.code, project.reportDate);
-            }
-            totalQty += l.quantity;
+    for (const w of wbs) {
+      if (!w.isLeaf || w.deletedAt) continue;
+
+      // Milestone — tarih girilmişse al, yoksa gösterme
+      if (w.activityType === "milestone") {
+        if (w.milestoneDate) {
+          leafPlan.set(w.code, { start: w.milestoneDate, end: w.milestoneDate });
+        }
+        // Milestone gerçekleşmesi varsa onu da ekle
+        if (w.milestoneCompletedAt) {
+          leafReal.set(w.code, { start: w.milestoneCompletedAt, end: w.milestoneCompletedAt });
+        }
+        continue;
+      }
+
+      // Work — baseline'da miktar girilmişse al
+      const planR = getPlanRange(baseline[w.code]);
+      if (planR.start && planR.end) {
+        leafPlan.set(w.code, { start: planR.start, end: planR.end });
+      }
+
+      // Realized
+      const realR = getPlanRange(realized[w.code]);
+      if (realR.start && realR.end) {
+        leafReal.set(w.code, { start: realR.start, end: realR.end });
+      }
+    }
+
+    // 2. Tüm WBS'i hiyerarşik sırala ve filtreyi uygula
+    const sortedAll = wbs
+      .filter((w) => !w.deletedAt && w.level >= 1 && w.level <= 3)
+      .slice()
+      .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+
+    // Filter map
+    const levelEnabled: Record<number, boolean> = { 1: showL1, 2: showL2, 3: showL3 };
+
+    // 3. Parent satırlar için: descendant leaf'lerin (filtrelenmemiş) min/max'i.
+    //    Parent satırın kendisi de filtreden geçiyorsa eklenir.
+    function descendantLeafCodes(parentCode: string): string[] {
+      const out: string[] = [];
+      for (const w of wbs) {
+        if (w.deletedAt) continue;
+        if (!w.isLeaf) continue;
+        if (w.code === parentCode) continue;
+        if (w.code.startsWith(parentCode + ".")) out.push(w.code);
+      }
+      return out;
+    }
+
+    const out: TimelineRow[] = [];
+    for (const w of sortedAll) {
+      // Level filtresi
+      if (!levelEnabled[w.level]) continue;
+
+      if (w.isLeaf) {
+        const p = leafPlan.get(w.code);
+        if (!p) continue; // miktar/tarih girilmemiş → satır YOK
+        const r = leafReal.get(w.code);
+        out.push({
+          item: w,
+          level: w.level,
+          isLeaf: true,
+          planRange: p,
+          realizedRange: r,
+        });
+      } else {
+        // Parent rollup — sadece miktar girilmiş leaf'lerin min/max'i
+        const leaves = descendantLeafCodes(w.code);
+        let minStart: string | undefined;
+        let maxEnd: string | undefined;
+        let minRealStart: string | undefined;
+        let maxRealEnd: string | undefined;
+        for (const code of leaves) {
+          const p = leafPlan.get(code);
+          if (p) {
+            if (!minStart || p.start < minStart) minStart = p.start;
+            if (!maxEnd || p.end > maxEnd) maxEnd = p.end;
+          }
+          const r = leafReal.get(code);
+          if (r) {
+            if (!minRealStart || r.start < minRealStart) minRealStart = r.start;
+            if (!maxRealEnd || r.end > maxRealEnd) maxRealEnd = r.end;
           }
         }
-        pDates.sort();
-        rDates.sort();
-        const planStart = pDates[0];
-        const planEnd = pDates[pDates.length - 1];
-        const realStart = rDates[0];
-        const realEnd = rDates[rDates.length - 1];
-        const pct = totalQty > 0 ? Math.min(1, cumReal / totalQty) : 0;
-        return { w, planStart, planEnd, realStart, realEnd, pct };
-      })
-      .filter((r) => r.planStart || r.realStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wbs, planned, realized, project]);
-
-  const rows = useMemo(() => {
-    return allRows
-      .filter((r) => {
-        if (r.w.level === 1) return showL1;
-        if (r.w.level === 2) return showL2;
-        if (r.w.level === 3) return showL3;
-        return false;
-      })
-      .sort((a, b) => {
-        // Hiyerarşik: önce parent (L1) sonra altı (L2), sonra alt-alt (L3)
-        return a.w.code.localeCompare(b.w.code, undefined, { numeric: true });
-      });
-  }, [allRows, showL1, showL2, showL3]);
-
-  const start = project?.startDate ?? toISODate(new Date());
-  const end = project?.plannedEnd ?? toISODate(addDays(new Date(), 180));
-  const totalDays = daysBetween(start, end) + 1;
-
-  // Ticks
-  const ticks = useMemo(() => {
-    const arr: { date: string; label: string; major: boolean }[] = [];
-    let d = new Date(start);
-    const endD = new Date(end);
-    const step = granularity === "day" ? 7 : granularity === "week" ? 7 : 30;
-    while (d <= endD) {
-      const dStr = toISODate(d);
-      let label = "";
-      let major = false;
-      if (granularity === "month") {
-        label = `${MONTH_LABEL[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`;
-        major = true;
-      } else if (granularity === "week") {
-        const weekNo = Math.ceil((daysBetween(start, dStr) + 1) / 7);
-        label = `H${weekNo}`;
-        major = d.getDate() <= 7; // ay başlangıcı major
-      } else {
-        // day: her 7. gün label
-        label = `${d.getDate()}/${d.getMonth() + 1}`;
-        major = d.getDay() === 1; // pazartesi major
+        if (minStart && maxEnd) {
+          out.push({
+            item: w,
+            level: w.level,
+            isLeaf: false,
+            planRange: { start: minStart, end: maxEnd },
+            realizedRange:
+              minRealStart && maxRealEnd
+                ? { start: minRealStart, end: maxRealEnd }
+                : undefined,
+          });
+        }
       }
-      arr.push({ date: dStr, label, major });
-      d = addDays(d, step);
     }
-    return arr;
-  }, [start, end, granularity]);
+    return out;
+  }, [wbs, baseline, realized, project, showL1, showL2, showL3]);
 
-  function dateToPct(date: string): number {
-    const offset = daysBetween(start, date);
-    return (offset / totalDays) * 100;
-  }
-
+  // ─── PDF Export ───
   async function exportPdf() {
-    if (!exportRef.current || !project) return;
+    if (!project) return;
     setExporting(true);
     try {
-      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
-        import("jspdf"),
-        import("html2canvas-pro"),
-      ]);
-      const el = exportRef.current;
-      const canvas = await html2canvas(el, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-        logging: false,
-      });
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF("landscape", "mm", "a3");
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      const imgRatio = canvas.width / canvas.height;
-      const pageRatio = pageW / pageH;
-      let imgW = pageW - 20;
-      let imgH = imgW / imgRatio;
-      if (imgRatio < pageRatio) {
-        // image is taller than page
-        imgH = pageH - 30;
-        imgW = imgH * imgRatio;
-      }
-      // Başlık
-      pdf.setFontSize(16);
-      pdf.setFont("helvetica", "bold");
-      pdf.text(project.name, 10, 10);
-      pdf.setFontSize(10);
-      pdf.setFont("helvetica", "normal");
-      pdf.text(
-        `Timeline · ${formatDate(start)} → ${formatDate(end)} · ${totalDays} gün · Rapor: ${formatDate(project.reportDate)}`,
-        10,
-        15
-      );
-      pdf.addImage(imgData, "PNG", 10, 20, imgW, imgH);
-      const fileName = `${project.name.replace(/\s+/g, "-")}-Timeline-${toISODate(new Date())}.pdf`;
-      pdf.save(fileName);
-      toast("PDF indirildi", "success");
+      await loadingOverlay.run(async () => {
+        const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+          import("jspdf"),
+          import("html2canvas-pro"),
+        ]);
+        const el = document.querySelector("[data-timeline-capture]") as HTMLElement | null;
+        if (!el) throw new Error("Capture container bulunamadı");
+
+        const prev = {
+          maxHeight: el.style.maxHeight,
+          height: el.style.height,
+          overflow: el.style.overflow,
+          width: el.style.width,
+        };
+        el.style.maxHeight = "none";
+        el.style.height = "auto";
+        el.style.overflow = "visible";
+        el.style.width = `${el.scrollWidth}px`;
+
+        const canvas = await html2canvas(el, {
+          scale: 2,
+          backgroundColor: "#ffffff",
+          useCORS: true,
+          logging: false,
+          width: el.scrollWidth,
+          height: el.scrollHeight,
+          windowWidth: el.scrollWidth,
+          windowHeight: el.scrollHeight,
+        });
+
+        el.style.maxHeight = prev.maxHeight;
+        el.style.height = prev.height;
+        el.style.overflow = prev.overflow;
+        el.style.width = prev.width;
+
+        const pdf = new jsPDF("landscape", "mm", "a3");
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        const margin = 10;
+        const headerH = 14;
+        const availW = pageW - margin * 2;
+        const availH = pageH - margin - headerH;
+        const pxPerMm = canvas.width / availW;
+        const imgWmm = availW;
+        const imgHmm = canvas.height / pxPerMm;
+        const imgData = canvas.toDataURL("image/png");
+
+        const drawHeader = (subtitle: string) => {
+          pdf.setFontSize(16);
+          pdf.setFont("helvetica", "bold");
+          pdf.text(project.name, margin, margin);
+          pdf.setFontSize(10);
+          pdf.setFont("helvetica", "normal");
+          pdf.text(subtitle, margin, margin + 5);
+        };
+        const baseSubtitle = `Timeline (Baseline) · ${formatDate(project.startDate)} -> ${formatDate(project.plannedEnd)} · Rapor: ${formatDate(project.reportDate)}`;
+
+        if (imgHmm <= availH) {
+          drawHeader(baseSubtitle);
+          pdf.addImage(imgData, "PNG", margin, margin + headerH, imgWmm, imgHmm);
+        } else {
+          const sliceHmm = availH;
+          const sliceHpx = sliceHmm * pxPerMm;
+          const totalPages = Math.ceil(canvas.height / sliceHpx);
+          const tmp = document.createElement("canvas");
+          tmp.width = canvas.width;
+          const ctx = tmp.getContext("2d")!;
+          for (let p = 0; p < totalPages; p++) {
+            const offsetY = p * sliceHpx;
+            const sliceActualH = Math.min(sliceHpx, canvas.height - offsetY);
+            tmp.height = sliceActualH;
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, tmp.width, sliceActualH);
+            ctx.drawImage(canvas, 0, offsetY, canvas.width, sliceActualH, 0, 0, canvas.width, sliceActualH);
+            const sliceData = tmp.toDataURL("image/png");
+            if (p > 0) pdf.addPage("a3", "landscape");
+            drawHeader(`${baseSubtitle} · sayfa ${p + 1}/${totalPages}`);
+            const sliceHmmActual = sliceActualH / pxPerMm;
+            pdf.addImage(sliceData, "PNG", margin, margin + headerH, imgWmm, sliceHmmActual);
+          }
+        }
+        const fileName = `${project.name.replace(/\s+/g, "-")}-Timeline-Baseline-${toISODate(new Date())}.pdf`;
+        pdf.save(fileName);
+        toast("Timeline PDF kaydedildi (A3)", "success");
+      }, "Timeline PDF hazırlanıyor");
     } catch (err) {
       console.error(err);
       toast("PDF üretilirken hata oluştu", "error");
@@ -207,243 +298,146 @@ export default function TimelinePage() {
 
   if (!project) {
     return (
-      <Card>
-        <CardTitle>Proje Yok</CardTitle>
-      </Card>
+      <>
+        <PageHeader title="Timeline & Gantt" icon={BarChart3} />
+        <Alert variant="warning">Önce bir proje seçin.</Alert>
+      </>
     );
   }
-
-  const granLabel: Record<Granularity, string> = {
-    day: "Günlük",
-    week: "Haftalık",
-    month: "Aylık",
-  };
-
-  // Tablo genişliği — granularite'e göre min-width
-  const minTableWidth =
-    granularity === "day" ? Math.max(1600, totalDays * 18) : granularity === "week" ? 1400 : 1000;
 
   return (
     <>
       <PageHeader
         title="Timeline & Gantt"
-        description={`${formatDate(start)} → ${formatDate(end)} · ${totalDays} gün`}
+        description={`Baseline planı · ${formatDate(project.startDate)} → ${formatDate(project.plannedEnd)}`}
         icon={BarChart3}
         actions={
-          <Button variant="accent" onClick={exportPdf} disabled={exporting}>
-            {exporting ? (
-              <>
-                <Loader2 size={14} className="animate-spin" /> Üretiliyor...
-              </>
-            ) : (
-              <>
-                <FileDown size={14} /> PDF İndir
-              </>
-            )}
+          <Button variant="accent" onClick={exportPdf} disabled={exporting} size="sm">
+            <FileDown size={14} />
+            {exporting ? "Üretiliyor..." : "PDF (A3)"}
           </Button>
         }
       />
 
-      {/* Kontrol barı: tip filtresi + granularite */}
-      <Card className="!p-4 mb-4">
-        <div className="flex flex-wrap items-center gap-4">
-          <div>
-            <div className="text-[10px] uppercase tracking-wider font-bold text-text3 mb-1.5">
-              Görüntülenecek Tipler
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <TypeChip
-                active={showL1}
-                onToggle={() => setShowL1(!showL1)}
-                icon={<Layers3 size={14} />}
-                label="Ana Başlıklar"
-                color="blue"
-              />
-              <TypeChip
-                active={showL2}
-                onToggle={() => setShowL2(!showL2)}
-                icon={<Layers2 size={14} />}
-                label="Alt Başlıklar"
-                color="purple"
-              />
-              <TypeChip
-                active={showL3}
-                onToggle={() => setShowL3(!showL3)}
-                icon={<FileText size={14} />}
-                label="İş Kalemleri"
-                color="accent"
-              />
-            </div>
-          </div>
-          <div className="ml-auto">
-            <div className="text-[10px] uppercase tracking-wider font-bold text-text3 mb-1.5">
-              Görünüm
-            </div>
-            <div className="inline-flex gap-1 p-1 bg-bg2 border border-border rounded-lg">
-              {(["day", "week", "month"] as Granularity[]).map((g) => (
-                <button
-                  key={g}
-                  onClick={() => setGranularity(g)}
-                  className={cn(
-                    "px-3 h-8 rounded-md text-xs font-semibold transition-all",
-                    granularity === g
-                      ? "bg-white shadow-soft border border-border text-text"
-                      : "text-text2 hover:text-text"
-                  )}
-                >
-                  {granLabel[g]}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {!showL1 && !showL2 && !showL3 && (
-        <Alert variant="warning" className="mb-4">
-          Hiçbir tip seçili değil. En az birini aç.
+      {/* Baseline durumu */}
+      {!hasBaseline && Object.keys(planned).length > 0 && (
+        <Alert variant="info" className="mb-4">
+          <Info size={14} className="inline mr-1.5" />
+          <strong>Baseline alınmamış.</strong> Şu an mevcut planlama verisi gösteriliyor.
+          Baseline almak için <a href="/planning" className="text-accent underline font-bold">Planlama</a> sayfasında
+          &quot;Baseline Al&quot; butonuna basın.
         </Alert>
       )}
 
-      {rows.length === 0 ? (
+      {hasBaseline && baselineSetAt && (
+        <div className="mb-3 inline-flex items-center gap-2 text-[11px] text-accent bg-accent/8 border border-accent/25 rounded-md px-2.5 py-1">
+          <Info size={11} />
+          <span className="font-bold uppercase tracking-wider">Baseline</span>
+          <span className="text-text2">·</span>
+          <span className="font-mono">{formatDate(baselineSetAt)} tarihinde donduruldu</span>
+        </div>
+      )}
+
+      {/* Filtreler */}
+      <Card className="!p-3 mb-3 space-y-2">
+        {/* Satır 1: Seviye chip'leri */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wider font-bold text-text3 mr-1">
+            Seviyeler:
+          </span>
+          <TypeChip
+            active={showL1}
+            onToggle={() => setShowL1(!showL1)}
+            icon={<Layers3 size={13} />}
+            label="L1 — Ana Başlıklar"
+            color="blue"
+          />
+          <TypeChip
+            active={showL2}
+            onToggle={() => setShowL2(!showL2)}
+            icon={<Layers2 size={13} />}
+            label="L2 — Alt Başlıklar"
+            color="purple"
+          />
+          <TypeChip
+            active={showL3}
+            onToggle={() => setShowL3(!showL3)}
+            icon={<FileText size={13} />}
+            label="L3 — İş Kalemleri"
+            color="slate"
+          />
+          <span className="ml-auto text-[10.5px] text-text3 font-mono">
+            {rows.length} satır gösteriliyor
+          </span>
+        </div>
+        {/* Satır 2: Planlanan / Gerçekleşen chip'leri */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wider font-bold text-text3 mr-1">
+            Veri:
+          </span>
+          <TypeChip
+            active={showPlan}
+            onToggle={() => setShowPlan(!showPlan)}
+            icon={<CalendarDays size={13} />}
+            label="Planlanan"
+            color="blue"
+          />
+          <TypeChip
+            active={showRealized}
+            onToggle={() => setShowRealized(!showRealized)}
+            icon={<CheckCircle2 size={13} />}
+            label="Gerçekleşen"
+            color="accent"
+          />
+          {showRealized && (
+            <span className="text-[10.5px] text-text3 italic ml-1">
+              ℹ Gerçekleşen açıkken öncül okları kapalıdır.
+            </span>
+          )}
+        </div>
+      </Card>
+
+      {!showL1 && !showL2 && !showL3 ? (
+        <Alert variant="warning">Hiçbir seviye seçili değil — en az birini açın.</Alert>
+      ) : !showPlan && !showRealized ? (
+        <Alert variant="warning">
+          Hem Planlanan hem Gerçekleşen kapalı — en az birini açın.
+        </Alert>
+      ) : rows.length === 0 ? (
         <Card>
-          <CardTitle>Henüz tarih atanmış iş yok</CardTitle>
-          <p className="text-sm text-text2">
-            Önce <a href="/planning" className="text-accent underline">Planlama</a>&apos;dan tarihler gir.
+          <p className="text-sm text-text2 text-center py-8">
+            Bu filtre için gösterilecek kalem yok.{" "}
+            <a href="/planning" className="text-accent underline">
+              Planlama
+            </a>
+            &apos;dan baseline almayı ve plan girmeyi unutmayın.
           </p>
         </Card>
       ) : (
-        <Card className="!p-0 overflow-hidden">
-          <div className="overflow-auto max-h-[calc(100vh-280px)]" ref={exportRef}>
-            <div className="bg-white" style={{ minWidth: `${minTableWidth}px` }}>
-              {/* Header */}
-              <div className="grid grid-cols-[320px_1fr] gap-3 border-b-2 border-border bg-bg2 sticky top-0 z-20 shadow-soft">
-                <div className="text-[10px] uppercase tracking-wider font-bold text-text2 sticky left-0 z-30 bg-bg2 px-4 py-3 border-r border-border">
-                  İş Kalemi / Başlık
-                </div>
-                <div className="relative h-7 my-3">
-                  {ticks.map((t) => (
-                    <div
-                      key={t.date}
-                      className={cn(
-                        "absolute top-0 text-[10px] font-mono",
-                        t.major ? "text-text font-bold" : "text-text3"
-                      )}
-                      style={{ left: `${dateToPct(t.date)}%` }}
-                    >
-                      {t.label}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Rows */}
-              <div>
-                {rows.map((r) => {
-                  const c = LEVEL_COLOR[r.w.level] || LEVEL_COLOR[3];
-                  const indent = (r.w.level - 1) * 14;
-                  // Solid bg for sticky-left cell — Tailwind class'larından bağımsız (sticky için opak şart)
-                  const stickyBgColor =
-                    r.w.level === 1 ? "#eff6ff" : r.w.level === 2 ? "#faf5ff" : "#ffffff";
-                  return (
-                    <div
-                      key={r.w.id}
-                      className={cn(
-                        "grid grid-cols-[320px_1fr] gap-3 items-center group hover:bg-bg2/40 transition-colors border-b border-border last:border-b-0"
-                      )}
-                    >
-                      <div
-                        className="text-xs truncate flex items-center gap-2 py-2 px-4 sticky left-0 z-10 border-r border-border group-hover:bg-bg2"
-                        style={{
-                          paddingLeft: `${indent + 16}px`,
-                          backgroundColor: stickyBgColor,
-                        }}
-                      >
-                        <span
-                          className={cn(
-                            "text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded shrink-0",
-                            c.text, c.barBg
-                          )}
-                        >
-                          {LEVEL_LABEL[r.w.level]}
-                        </span>
-                        <span className="font-mono text-text3 shrink-0">{r.w.code}</span>
-                        <span className={cn("truncate", r.w.level === 1 && "font-bold", r.w.level === 2 && "font-semibold")}>
-                          {r.w.name}
-                        </span>
-                      </div>
-                      <div className="relative h-6">
-                        {/* Bg ticks */}
-                        {ticks.map((t) => (
-                          <div
-                            key={t.date}
-                            className={cn(
-                              "absolute top-0 bottom-0 w-px",
-                              t.major ? "bg-border2" : "bg-border"
-                            )}
-                            style={{ left: `${dateToPct(t.date)}%` }}
-                          />
-                        ))}
-                        {/* Planned bar */}
-                        {r.planStart && r.planEnd && (
-                          <div
-                            className={cn(
-                              "absolute h-2 rounded-sm",
-                              c.bar,
-                              "opacity-40"
-                            )}
-                            style={{
-                              top: r.w.level === 1 ? "6px" : r.w.level === 2 ? "8px" : "10px",
-                              left: `${dateToPct(r.planStart)}%`,
-                              width: `${Math.max(0.5, dateToPct(r.planEnd) - dateToPct(r.planStart) + 0.5)}%`,
-                            }}
-                            title={`Plan: ${formatDate(r.planStart)} → ${formatDate(r.planEnd)}`}
-                          />
-                        )}
-                        {/* Realized bar */}
-                        {r.realStart && r.realEnd && (
-                          <div
-                            className={cn("absolute h-2 rounded-sm", c.bar)}
-                            style={{
-                              top: r.w.level === 1 ? "14px" : r.w.level === 2 ? "14px" : "14px",
-                              left: `${dateToPct(r.realStart)}%`,
-                              width: `${Math.max(0.5, dateToPct(r.realEnd) - dateToPct(r.realStart) + 0.5)}%`,
-                            }}
-                            title={`Gerçek: ${formatDate(r.realStart)} → ${formatDate(r.realEnd)} (${formatPct(r.pct, 0)})`}
-                          />
-                        )}
-                        {/* Today marker */}
-                        <div
-                          className="absolute top-0 bottom-0 w-0.5 bg-red"
-                          style={{ left: `${dateToPct(project.reportDate)}%` }}
-                          title={`Rapor Tarihi: ${formatDate(project.reportDate)}`}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Legend */}
-              <div className="flex items-center flex-wrap gap-x-6 gap-y-2 px-4 py-3 border-t border-border bg-bg2/50 text-xs text-text2">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-text3">Açıklama:</span>
-                <LegendItem color="bg-blue" label="Ana Başlık" />
-                <LegendItem color="bg-purple" label="Alt Başlık" />
-                <LegendItem color="bg-accent" label="İş Kalemi" />
-                <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-1.5 bg-text3/40 rounded-sm" /> Planlanan
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-1.5 bg-text3 rounded-sm" /> Gerçekleşen
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-0.5 h-3 bg-red" /> Rapor Tarihi
-                </span>
-              </div>
-            </div>
-          </div>
-        </Card>
+        <div data-timeline-capture>
+          <BigGantt
+            rows={rows}
+            projectStart={project.startDate}
+            projectEnd={project.plannedEnd}
+            reportDate={project.reportDate}
+            schedules={schedules}
+            criticalCodes={criticalCodes}
+            cycleNodes={cycleNodes}
+            showPlan={showPlan}
+            showRealized={showRealized}
+            onOpenWhatIf={() => setWhatIfOpen(true)}
+          />
+        </div>
       )}
+
+      <WhatIfDialog
+        open={whatIfOpen}
+        onClose={() => setWhatIfOpen(false)}
+        wbs={wbs}
+        leafs={wbs.filter((w) => w.isLeaf && !w.deletedAt)}
+        planned={baseline}
+        projectStart={project.startDate}
+      />
     </>
   );
 }
@@ -459,19 +453,21 @@ function TypeChip({
   onToggle: () => void;
   icon: React.ReactNode;
   label: string;
-  color: "blue" | "purple" | "accent";
+  color: "blue" | "purple" | "slate" | "accent";
 }) {
   const colorMap = {
     blue: { border: "border-blue", bg: "bg-blue/10", text: "text-blue" },
     purple: { border: "border-purple", bg: "bg-purple/10", text: "text-purple" },
+    slate: { border: "border-slate-400", bg: "bg-slate-100", text: "text-slate-700" },
     accent: { border: "border-accent", bg: "bg-accent/10", text: "text-accent" },
   };
   const c = colorMap[color];
   return (
     <button
+      type="button"
       onClick={onToggle}
       className={cn(
-        "inline-flex items-center gap-2 h-9 px-3 rounded-lg border text-xs font-semibold transition-all",
+        "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-[11px] font-bold transition-all",
         active
           ? [c.bg, c.text, c.border]
           : "bg-white border-border text-text3 hover:text-text2 hover:border-border2"
@@ -481,20 +477,11 @@ function TypeChip({
         type="checkbox"
         checked={active}
         onChange={onToggle}
-        className={cn("w-3.5 h-3.5 rounded pointer-events-none", active && c.text)}
+        className={cn("w-3 h-3 rounded pointer-events-none", active && c.text)}
         readOnly
       />
       {icon}
       {label}
     </button>
-  );
-}
-
-function LegendItem({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span className={cn("w-3 h-3 rounded", color)} />
-      {label}
-    </span>
   );
 }

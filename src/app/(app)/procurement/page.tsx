@@ -11,6 +11,7 @@ import {
   Truck,
   Package,
   CalendarClock,
+  FileDown,
 } from "lucide-react";
 import { useStore, useCurrentProject } from "@/lib/store";
 import { PageHeader } from "@/components/layout/page-header";
@@ -24,6 +25,10 @@ import { useToast } from "@/components/ui/toast";
 import { formatDate, formatMoney, formatNumber, cn, toISODate } from "@/lib/utils";
 import type { ProcurementItem } from "@/lib/store/types";
 import type { Currency } from "@/lib/utils";
+import {
+  ProcurementKpiStrip,
+  computeProcurementKpis,
+} from "@/components/dashboard/procurement-kpis";
 
 const STATUS_LABELS: Record<ProcurementItem["status"], string> = {
   talep: "Talep",
@@ -74,6 +79,9 @@ export default function ProcurementPage() {
 
   const criticalCount = items.filter((p) => p.isCritical).length;
 
+  // KPI hesaplamaları
+  const kpis = useMemo(() => computeProcurementKpis(items, totalsByCurrency), [items, totalsByCurrency]);
+
   if (!project) {
     return (
       <Card>
@@ -92,40 +100,285 @@ export default function ProcurementPage() {
     );
   }
 
+  async function exportPdf() {
+    if (!project) return;
+    try {
+      const [{ default: jsPDF }, autoTableMod] = await Promise.all([
+        import("jspdf"),
+        import("jspdf-autotable"),
+      ]);
+      const autoTable = autoTableMod.default;
+
+      // Geist Regular TTF
+      const fontResp = await fetch("/fonts/Geist-Regular.ttf");
+      if (!fontResp.ok) throw new Error("Font yüklenemedi");
+      const fontBuf = await fontResp.arrayBuffer();
+      const fontB64 = (() => {
+        const bytes = new Uint8Array(fontBuf);
+        let binary = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode.apply(
+            null,
+            Array.from(bytes.subarray(i, i + chunk))
+          );
+        }
+        return btoa(binary);
+      })();
+
+      // A4 LANDSCAPE — daha geniş sütun alanı için
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      pdf.addFileToVFS("Geist-Regular.ttf", fontB64);
+      pdf.addFont("Geist-Regular.ttf", "Geist", "normal");
+      pdf.addFont("Geist-Regular.ttf", "Geist", "bold");
+      pdf.setFont("Geist", "normal");
+
+      const pageW = pdf.internal.pageSize.getWidth();
+      const marginX = 8;
+      const availW = pageW - marginX * 2;
+
+      // ───── BRAND-GREEN HEADER ─────
+      const headerX = marginX;
+      const headerY = marginX;
+      const headerW = availW;
+      const headerH = 56;
+
+      // Smooth gradient brand-700 → brand-500
+      const strips = 240;
+      const stripW = headerW / strips;
+      const c1 = { r: 4, g: 120, b: 87 };
+      const c2 = { r: 16, g: 185, b: 129 };
+      for (let i = 0; i < strips; i++) {
+        const t = i / (strips - 1);
+        const r = Math.round(c1.r + (c2.r - c1.r) * t);
+        const g = Math.round(c1.g + (c2.g - c1.g) * t);
+        const b = Math.round(c1.b + (c2.b - c1.b) * t);
+        pdf.setFillColor(r, g, b);
+        pdf.rect(headerX + i * stripW, headerY, stripW + 0.2, headerH, "F");
+      }
+
+      // Dekoratif daireler (clip + opacity)
+      pdf.saveGraphicsState();
+      pdf.rect(headerX, headerY, headerW, headerH);
+      pdf.clip();
+      pdf.discardPath();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pdfAny = pdf as any;
+      pdfAny.setGState(new pdfAny.GState({ opacity: 0.18 }));
+      pdf.setFillColor(4, 78, 56);
+      pdf.circle(headerX + headerW - 4, headerY + 4, 28, "F");
+      pdf.circle(headerX + headerW * 0.78, headerY + headerH + 2, 18, "F");
+      pdfAny.setGState(new pdfAny.GState({ opacity: 1 }));
+      pdf.restoreGraphicsState();
+
+      // Sol üst rozet
+      pdf.setFont("Geist", "bold");
+      pdf.setFontSize(6.5);
+      pdf.setTextColor(220, 252, 231);
+      pdf.text("PROCUREMENT  ·  SATIN ALMA RAPORU", headerX + 7, headerY + 8);
+      pdf.setDrawColor(220, 252, 231);
+      pdf.setLineWidth(0.2);
+      pdf.line(headerX + 7, headerY + 9.2, headerX + 60, headerY + 9.2);
+
+      // Proje adı
+      pdf.setFont("Geist", "bold");
+      pdf.setFontSize(28);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text(project.name, headerX + 7, headerY + 21);
+
+      const aylar = [
+        "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+        "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+      ];
+      const today = new Date();
+      const todayTr = `${today.getDate()} ${aylar[today.getMonth()]} ${today.getFullYear()}`;
+      pdf.setFont("Geist", "normal");
+      pdf.setFontSize(9);
+      pdf.setTextColor(209, 250, 229);
+      pdf.text(`Rapor günü: ${todayTr}`, headerX + 7, headerY + 26);
+
+      // Sağ üst — TOPLAM KALEM
+      pdf.setFont("Geist", "bold");
+      pdf.setFontSize(6.5);
+      pdf.setTextColor(220, 252, 231);
+      pdf.text("TOPLAM KALEM", headerX + headerW - 7, headerY + 8, { align: "right" });
+      pdf.setFont("Geist", "bold");
+      pdf.setFontSize(32);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text(String(items.length), headerX + headerW - 7, headerY + 22, { align: "right" });
+      pdf.setFont("Geist", "normal");
+      pdf.setFontSize(8);
+      pdf.setTextColor(209, 250, 229);
+      pdf.text(`${criticalCount} kritik`, headerX + headerW - 7, headerY + 27, { align: "right" });
+
+      // Alt 4'lü info kartları — KPI özeti
+      const cardY = headerY + 32;
+      const cardH = 18;
+      const cardCount = 4;
+      const cardGap = 2.5;
+      const cardW = (headerW - 14 - cardGap * (cardCount - 1)) / cardCount;
+      const totalLine = kpis.activeCurrencies
+        .map((c) => `${formatMoney(kpis.totalsByCurrency.planned[c], c, 0)}`)
+        .join(" · ") || "—";
+      const cards = [
+        { label: "GECİKME (TESLİM)", value: `${kpis.deliveryLateCount} kalem${kpis.deliveryMaxDays > 0 ? ` · +${kpis.deliveryMaxDays}g` : ""}` },
+        { label: "GECİKME (PO)", value: `${kpis.poLateCount} kalem${kpis.poMaxDays > 0 ? ` · +${kpis.poMaxDays}g` : ""}` },
+        { label: "TESLİM EDİLEN", value: `${kpis.delivered} / ${kpis.total}` },
+        { label: "TOPLAM BEDEL", value: totalLine },
+      ];
+      cards.forEach((c, i) => {
+        const cx = headerX + 7 + i * (cardW + cardGap);
+        pdf.setFillColor(2, 44, 34);
+        pdf.roundedRect(cx, cardY, cardW, cardH, 1.8, 1.8, "F");
+        pdf.setDrawColor(110, 231, 183);
+        pdf.setLineWidth(0.25);
+        pdf.line(cx + 3, cardY + 6.5, cx + 6.5, cardY + 6.5);
+        pdf.setFont("Geist", "bold");
+        pdf.setFontSize(6);
+        pdf.setTextColor(167, 243, 208);
+        pdf.text(c.label, cx + 3, cardY + 5.5);
+        pdf.setFont("Geist", "bold");
+        pdf.setFontSize(10);
+        pdf.setTextColor(255, 255, 255);
+        let val = c.value;
+        const maxW = cardW - 6;
+        if (pdf.getTextWidth(val) > maxW) {
+          let fs = 10;
+          while (fs > 6 && pdf.getTextWidth(val) > maxW) {
+            fs -= 0.5;
+            pdf.setFontSize(fs);
+          }
+        }
+        pdf.text(val, cx + 3, cardY + 13);
+      });
+
+      pdf.setTextColor(0, 0, 0);
+      pdf.setDrawColor(0, 0, 0);
+      pdf.setLineWidth(0.2);
+
+      // ───── TABLO ─────
+      type ProcRowData = {
+        crit: string;
+        material: string;
+        supplier: string;
+        plan: string;
+        gercek: string;
+        po: string;
+        exw: string;
+        teslim: string;
+        durum: string;
+      };
+      const body: ProcRowData[] = filtered.map((it) => {
+        const plannedPo = it.plannedPoDate ?? it.orderDate;
+        const plannedExw = it.plannedExwDate;
+        const plannedDel = it.plannedDeliveryDate ?? it.expectedDate;
+        const actualPo = it.actualPoDate;
+        const actualExw = it.actualExwDate;
+        const actualDel = it.actualDeliveredDate ?? it.deliveredDate;
+        const plannedTotal = it.quantity * it.unitPrice;
+        const actualTotal =
+          it.actualQuantity != null && it.actualUnitPrice != null
+            ? it.actualQuantity * it.actualUnitPrice
+            : null;
+        const fmtDate = (p?: string, a?: string) => {
+          if (!p && !a) return "—";
+          if (p && a) return `${formatDate(p)}\n${formatDate(a)}`;
+          return formatDate(p ?? a!);
+        };
+        return {
+          crit: it.isCritical ? "★" : "",
+          material: it.material,
+          supplier: it.supplier ?? "—",
+          plan: formatMoney(plannedTotal, it.currency, 0),
+          gercek: actualTotal != null
+            ? formatMoney(actualTotal, it.actualCurrency ?? it.currency, 0)
+            : "—",
+          po: fmtDate(plannedPo, actualPo),
+          exw: fmtDate(plannedExw, actualExw),
+          teslim: fmtDate(plannedDel, actualDel),
+          durum: STATUS_LABELS[it.status],
+        };
+      });
+
+      autoTable(pdf, {
+        startY: headerY + headerH + 5,
+        margin: { left: marginX, right: marginX, top: 14, bottom: 12 },
+        head: [["", "Malzeme", "Tedarikçi", "Plan", "Gerçek", "PO", "EXW", "Teslim", "Durum"]],
+        body: body.map((r) => [
+          r.crit, r.material, r.supplier, r.plan, r.gercek, r.po, r.exw, r.teslim, r.durum,
+        ]),
+        styles: {
+          font: "Geist",
+          fontSize: 8,
+          cellPadding: { top: 2, right: 2, bottom: 2, left: 2 },
+          overflow: "linebreak",
+          valign: "middle",
+          lineColor: [220, 220, 230],
+          lineWidth: 0.15,
+          textColor: [15, 23, 42],
+        },
+        headStyles: {
+          fillColor: [4, 120, 87],
+          textColor: 255,
+          fontStyle: "bold",
+          fontSize: 8.5,
+          halign: "center",
+        },
+        columnStyles: {
+          0: { cellWidth: 6, halign: "center", textColor: [217, 119, 6] },
+          1: { cellWidth: 65, halign: "left", fontStyle: "bold" },
+          2: { cellWidth: 40, halign: "left" },
+          3: { cellWidth: 28, halign: "right", fontStyle: "bold", overflow: "visible" },
+          4: { cellWidth: 28, halign: "right", fontStyle: "bold", overflow: "visible" },
+          5: { cellWidth: 26, halign: "center", overflow: "visible" },
+          6: { cellWidth: 26, halign: "center", overflow: "visible" },
+          7: { cellWidth: 26, halign: "center", overflow: "visible" },
+          8: { cellWidth: 25, halign: "center", fontStyle: "bold", overflow: "visible" },
+        },
+        didDrawPage: (data) => {
+          const pageNum = pdf.getNumberOfPages();
+          const pageH = pdf.internal.pageSize.getHeight();
+          pdf.setFont("Geist", "normal");
+          pdf.setFontSize(7.5);
+          pdf.setTextColor(140, 140, 140);
+          pdf.text(
+            `${project.name}   ·   sayfa ${data.pageNumber}/${pageNum}`,
+            marginX,
+            pageH - 5
+          );
+          pdf.setTextColor(0, 0, 0);
+        },
+      });
+
+      const fname = `${project.name.replace(/\s+/g, "-")}-Procurement-${toISODate(new Date())}.pdf`;
+      pdf.save(fname);
+      toast("Procurement PDF indirildi", "success");
+    } catch (err) {
+      console.error(err);
+      toast("PDF üretilirken hata oluştu", "error");
+    }
+  }
+
   return (
     <>
       <PageHeader
-        title="Satın Alma"
+        title="Procurement"
         description={`${items.length} kayıt · ${criticalCount} kritik malzeme`}
         icon={ShoppingCart}
         actions={
-          <Button variant="accent" onClick={() => setCreating(true)}>
-            <Plus size={14} /> Yeni Kayıt
-          </Button>
+          <>
+            <Button variant="outline" onClick={exportPdf} disabled={items.length === 0}>
+              <FileDown size={14} /> PDF İndir
+            </Button>
+            <Button variant="accent" onClick={() => setCreating(true)}>
+              <Plus size={14} /> Yeni Kayıt
+            </Button>
+          </>
         }
       />
 
-      {/* Toplam kartları */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-        {(["TRY", "USD", "EUR"] as Currency[]).map((c) => (
-          <Card key={c} className="!p-4">
-            <div className="text-[10px] text-text3 uppercase font-bold tracking-wider mb-1">
-              Toplam {c}
-            </div>
-            <div className="flex items-baseline justify-between gap-2">
-              <div className="font-mono text-xl font-bold text-text tabular-nums">
-                {formatMoney(totalsByCurrency.planned[c], c, 0)}
-              </div>
-              <div className="text-[11px] text-text3 text-right">
-                <div>planlanan</div>
-                <div className="font-mono font-semibold text-green">
-                  {formatMoney(totalsByCurrency.actual[c], c, 0)} <span className="text-text3 font-normal">gerç.</span>
-                </div>
-              </div>
-            </div>
-          </Card>
-        ))}
-      </div>
+      {/* KPI'lar — 4 sabit kart: Gecikme Teslim, Gecikme PO, Teslim Edilen, Toplam Bedel */}
+      <ProcurementKpiStrip kpis={kpis} items={items} />
 
       {/* Kritik filtre */}
       <div className="flex items-center gap-2 mb-3">
@@ -142,47 +395,44 @@ export default function ProcurementPage() {
       {/* Tablo */}
       <Card className="!p-0 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr>
-                <th className="bg-bg2 px-2 py-2.5 border-b border-border w-8"></th>
-                <th className="bg-bg2 px-3 py-2.5 text-left text-[10px] uppercase tracking-wider font-bold text-text2 border-b border-border whitespace-nowrap min-w-[14rem]">
-                  Malzeme / Kategori
+          <table className="w-full text-sm border-collapse">
+            <thead className="bg-bg2 sticky top-0 z-10">
+              <tr className="text-[10px] uppercase tracking-wider font-bold text-text2">
+                <th className="px-3 py-2.5 text-center border-b border-border w-9"></th>
+                <th className="px-3 py-2.5 text-left border-b border-border w-[14rem]">
+                  Malzeme
                 </th>
-                <th className="bg-bg2 px-3 py-2.5 text-left text-[10px] uppercase tracking-wider font-bold text-text2 border-b border-border whitespace-nowrap">
+                <th className="px-3 py-2.5 text-left border-b border-border w-[8rem]">
                   Tedarikçi
                 </th>
-                <th className="bg-bg2 px-3 py-2.5 text-center text-[10px] uppercase tracking-wider font-bold text-text2 border-b border-border whitespace-nowrap">
-                  Plan
-                </th>
-                <th className="bg-bg2 px-3 py-2.5 text-right text-[10px] uppercase tracking-wider font-bold text-text2 border-b border-border whitespace-nowrap min-w-[10rem]">
+                <th className="px-3 py-2.5 text-right border-b border-border w-[7.5rem]">
                   Miktar × Fiyat
                 </th>
-                <th className="bg-bg2 px-3 py-2.5 text-right text-[10px] uppercase tracking-wider font-bold text-text2 border-b border-border whitespace-nowrap">
-                  Toplam
+                <th className="px-3 py-2.5 text-right border-b border-border w-[7.5rem]">
+                  Bütçe
+                  <div className="text-[9px] text-text3 normal-case font-normal mt-0.5">
+                    Plan / Gerçek
+                  </div>
                 </th>
-                <th className="bg-bg2 px-3 py-2.5 text-center text-[10px] uppercase tracking-wider font-bold text-text2 border-b border-border whitespace-nowrap">
-                  RFQ
-                </th>
-                <th className="bg-bg2 px-3 py-2.5 text-center text-[10px] uppercase tracking-wider font-bold text-text2 border-b border-border whitespace-nowrap">
+                <th className="px-3 py-2.5 text-center border-b border-border w-[7rem]">
                   PO
                 </th>
-                <th className="bg-bg2 px-3 py-2.5 text-center text-[10px] uppercase tracking-wider font-bold text-text2 border-b border-border whitespace-nowrap">
+                <th className="px-3 py-2.5 text-center border-b border-border w-[7rem]">
                   EXW
                 </th>
-                <th className="bg-bg2 px-3 py-2.5 text-center text-[10px] uppercase tracking-wider font-bold text-text2 border-b border-border whitespace-nowrap">
+                <th className="px-3 py-2.5 text-center border-b border-border w-[7rem]">
                   Teslim
                 </th>
-                <th className="bg-bg2 px-3 py-2.5 text-center text-[10px] uppercase tracking-wider font-bold text-text2 border-b border-border">
+                <th className="px-3 py-2.5 text-center border-b border-border w-[7rem]">
                   Durum
                 </th>
-                <th className="bg-bg2 px-3 py-2.5 border-b border-border w-32"></th>
+                <th className="px-3 py-2.5 border-b border-border w-[6rem]"></th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-3 py-10 text-center text-text3 text-sm">
+                  <td colSpan={10} className="px-3 py-12 text-center text-text3 text-sm">
                     {filterCritical ? "Kritik işaretli malzeme yok." : "Henüz kayıt yok."}
                   </td>
                 </tr>
@@ -215,6 +465,7 @@ export default function ProcurementPage() {
         }}
       />
       <ProcForm
+        key={editing?.id ?? "edit-empty"}
         open={!!editing}
         initial={editing || undefined}
         onClose={() => setEditing(null)}
@@ -241,7 +492,7 @@ export default function ProcurementPage() {
 }
 
 /* ============================================================ */
-/* Satır component (planlanan üst / gerçekleşen alt) */
+/* Satır component — tek satır, plan+gerçek bilgisi compact dual */
 /* ============================================================ */
 function ProcRow({
   item,
@@ -264,183 +515,177 @@ function ProcRow({
   const actualExw = item.actualExwDate;
   const actualDelivery = item.actualDeliveredDate ?? item.deliveredDate;
 
-  const hasActual =
-    item.actualQuantity != null ||
-    item.actualUnitPrice != null ||
-    actualPo ||
-    actualExw ||
-    actualDelivery;
-
   const plannedTotal = item.quantity * item.unitPrice;
   const actualTotal =
     item.actualQuantity != null && item.actualUnitPrice != null
       ? item.actualQuantity * item.actualUnitPrice
       : null;
   const diff = actualTotal != null ? actualTotal - plannedTotal : null;
+  const actualCurrency = item.actualCurrency ?? item.currency;
+
+  const rowBg = "bg-white hover:bg-bg2/40";
 
   return (
-    <>
-      {/* PLANNED ROW */}
-      <tr className={cn("hover:bg-bg2/30", item.isCritical && "bg-yellow/5")}>
-        <td className="px-2 py-2 border-b border-border/50 align-middle" rowSpan={hasActual ? 2 : 1}>
-          <button
-            onClick={onToggleCritical}
-            className={cn(
-              "p-1 rounded-md transition-colors",
-              item.isCritical
-                ? "text-yellow hover:bg-yellow/10"
-                : "text-text3 hover:text-yellow hover:bg-yellow/5"
-            )}
-            title={item.isCritical ? "Kritik bayrağını kaldır" : "Kritik işaretle"}
-          >
-            <Star size={16} className={item.isCritical ? "fill-yellow" : ""} />
-          </button>
-        </td>
-        <td className="px-3 py-2 border-b border-border/50 align-middle" rowSpan={hasActual ? 2 : 1}>
-          <div className="text-xs text-text3 uppercase tracking-wider font-bold mb-0.5">
-            {item.category}
-          </div>
-          <div className="font-medium text-sm">{item.material}</div>
-        </td>
-        <td className="px-3 py-2 border-b border-border/50 text-sm text-text2 align-middle" rowSpan={hasActual ? 2 : 1}>
-          {item.supplier || "—"}
-        </td>
-        <td className="px-2 py-2 border-b border-border/50">
-          <Badge variant="blue" className="!text-[9px]">PLAN</Badge>
-        </td>
-        <td className="px-3 py-2 border-b border-border/50 text-right font-mono text-xs tabular-nums">
-          {formatNumber(item.quantity, 0)} {item.unit} ×{" "}
-          <span className="font-semibold">{formatMoney(item.unitPrice, item.currency)}</span>
-        </td>
-        <td className="px-3 py-2 border-b border-border/50 text-right font-mono font-bold text-planned tabular-nums">
-          {formatMoney(plannedTotal, item.currency, 0)}
-        </td>
-        <DateCell planned={item.rfqEndDate} actual={undefined} hideActual />
-        <DateCell planned={plannedPo} actual={actualPo} hideActual />
-        <DateCell planned={plannedExw} actual={actualExw} hideActual />
-        <DateCell planned={plannedDelivery} actual={actualDelivery} hideActual />
-        <td className="px-3 py-2 border-b border-border/50 text-center align-middle" rowSpan={hasActual ? 2 : 1}>
-          <Badge variant={STATUS_VARIANT[item.status]}>{STATUS_LABELS[item.status]}</Badge>
-        </td>
-        <td className="px-3 py-2 border-b border-border/50 align-middle" rowSpan={hasActual ? 2 : 1}>
-          <div className="flex gap-0.5 justify-end">
-            <button
-              onClick={onActualize}
-              className="p-1.5 rounded text-text3 hover:text-green hover:bg-green/10"
-              title="Gerçekleşme Kaydet"
-            >
-              <CheckCircle2 size={14} />
-            </button>
-            <button
-              onClick={onEdit}
-              className="p-1.5 rounded text-text3 hover:text-accent hover:bg-accent/10"
-              title="Düzenle"
-            >
-              <Pencil size={12} />
-            </button>
-            <button
-              onClick={onDelete}
-              className="p-1.5 rounded text-text3 hover:text-red hover:bg-red/10"
-              title="Sil"
-            >
-              <Trash2 size={12} />
-            </button>
-          </div>
-        </td>
-      </tr>
+    <tr className={cn("border-b-2 border-border transition-colors", rowBg)}>
+      {/* Kritik yıldız */}
+      <td className="px-3 py-2 text-center align-middle">
+        <button
+          onClick={onToggleCritical}
+          className={cn(
+            "p-1 rounded-md transition-colors",
+            item.isCritical
+              ? "text-yellow"
+              : "text-text3/40 hover:text-yellow"
+          )}
+          title={item.isCritical ? "Kritik bayrağını kaldır" : "Kritik işaretle"}
+        >
+          <Star size={14} className={item.isCritical ? "fill-yellow" : ""} />
+        </button>
+      </td>
 
-      {/* ACTUAL ROW (sadece veri varsa) */}
-      {hasActual && (
-        <tr className={cn("border-b-2 border-border bg-green/3", item.isCritical && "bg-green/3")}>
-          <td className="px-2 py-2 border-b-2 border-border">
-            <Badge variant="green" className="!text-[9px]">GERÇ.</Badge>
-          </td>
-          <td className="px-3 py-2 border-b-2 border-border text-right font-mono text-xs tabular-nums">
-            {item.actualQuantity != null ? (
-              <>
-                {formatNumber(item.actualQuantity, 0)} {item.unit} ×{" "}
-                <span className="font-semibold">
-                  {formatMoney(item.actualUnitPrice ?? 0, item.actualCurrency ?? item.currency)}
-                </span>
-              </>
-            ) : (
-              <span className="text-text3 italic">miktar/fiyat bekleniyor</span>
-            )}
-          </td>
-          <td className="px-3 py-2 border-b-2 border-border text-right font-mono tabular-nums">
-            {actualTotal != null ? (
-              <>
-                <span className="font-bold text-realized">
-                  {formatMoney(actualTotal, item.actualCurrency ?? item.currency, 0)}
-                </span>
-                {diff != null && Math.abs(diff) > 0.5 && (
-                  <div className={cn("text-[10px] font-mono", diff > 0 ? "text-red" : "text-green")}>
-                    {diff > 0 ? "+" : ""}{formatMoney(diff, item.actualCurrency ?? item.currency, 0)}
-                  </div>
+      {/* Malzeme */}
+      <td className="px-3 py-2 align-middle">
+        <div className="text-[12.5px] font-semibold text-text leading-snug">
+          {item.material}
+        </div>
+      </td>
+
+      {/* Tedarikçi */}
+      <td className="px-3 py-2 align-middle text-[11.5px] text-text2 leading-snug">
+        {item.supplier ? item.supplier : <span className="text-text3">—</span>}
+      </td>
+
+      {/* Miktar × Fiyat */}
+      <td className="px-3 py-2 align-middle text-right">
+        <div className="font-mono text-[11px] tabular-nums leading-tight whitespace-nowrap">
+          <span className="text-text">
+            {formatNumber(item.quantity, 0)}
+            <span className="text-text3 mx-0.5">{item.unit}</span>
+          </span>
+          <span className="text-text3 mx-1">×</span>
+          <span className="font-semibold text-text">
+            {formatMoney(item.unitPrice, item.currency)}
+          </span>
+        </div>
+        {item.actualQuantity != null && item.actualUnitPrice != null && (
+          <div className="font-mono text-[10px] tabular-nums leading-tight text-realized mt-0.5 whitespace-nowrap">
+            <span>
+              {formatNumber(item.actualQuantity, 0)}
+              <span className="text-text3 mx-0.5">{item.unit}</span>
+            </span>
+            <span className="text-text3 mx-1">×</span>
+            <span className="font-semibold">
+              {formatMoney(item.actualUnitPrice, actualCurrency)}
+            </span>
+          </div>
+        )}
+      </td>
+
+      {/* Bütçe — Plan / Gerçek alt alta */}
+      <td className="px-3 py-2 align-middle text-right">
+        <div className="font-mono font-bold text-planned tabular-nums text-[12px] leading-tight whitespace-nowrap">
+          {formatMoney(plannedTotal, item.currency, 0)}
+        </div>
+        {actualTotal != null ? (
+          <div className="mt-0.5 leading-tight">
+            <div className="font-mono font-bold text-realized tabular-nums text-[12px] whitespace-nowrap">
+              {formatMoney(actualTotal, actualCurrency, 0)}
+            </div>
+            {diff != null && Math.abs(diff) > 0.5 && (
+              <div
+                className={cn(
+                  "inline-block mt-0.5 px-1.5 py-0 rounded text-[9.5px] font-mono font-bold",
+                  diff > 0 ? "bg-red/10 text-red" : "bg-green/10 text-green"
                 )}
-              </>
-            ) : (
-              <span className="text-text3 italic">—</span>
+              >
+                {diff > 0 ? "+" : ""}
+                {formatMoney(diff, actualCurrency, 0)}
+              </div>
             )}
-          </td>
-          <DateCell planned={undefined} actual={undefined} hideAll />
-          <DateCell planned={undefined} actual={actualPo} variant="actual" plannedRef={plannedPo} />
-          <DateCell planned={undefined} actual={actualExw} variant="actual" plannedRef={plannedExw} />
-          <DateCell planned={undefined} actual={actualDelivery} variant="actual" plannedRef={plannedDelivery} />
-        </tr>
-      )}
-    </>
+          </div>
+        ) : (
+          <div className="text-text3 text-[9.5px] italic mt-0.5">bekleniyor</div>
+        )}
+      </td>
+
+      {/* Tarihler — PO / EXW / Teslim */}
+      <DualDateCell planned={plannedPo} actual={actualPo} />
+      <DualDateCell planned={plannedExw} actual={actualExw} />
+      <DualDateCell planned={plannedDelivery} actual={actualDelivery} />
+
+      {/* Durum */}
+      <td className="px-3 py-2 align-middle text-center">
+        <Badge variant={STATUS_VARIANT[item.status]}>{STATUS_LABELS[item.status]}</Badge>
+      </td>
+
+      {/* Aksiyonlar */}
+      <td className="px-3 py-2 align-middle">
+        <div className="flex gap-0.5 justify-end">
+          <button
+            onClick={onActualize}
+            className="p-1.5 rounded text-text3 hover:text-realized hover:bg-realized/10 transition-colors"
+            title="Gerçekleşme Kaydet"
+          >
+            <CheckCircle2 size={14} />
+          </button>
+          <button
+            onClick={onEdit}
+            className="p-1.5 rounded text-text3 hover:text-accent hover:bg-accent/10 transition-colors"
+            title="Düzenle"
+          >
+            <Pencil size={12} />
+          </button>
+          <button
+            onClick={onDelete}
+            className="p-1.5 rounded text-text3 hover:text-red hover:bg-red/10 transition-colors"
+            title="Sil"
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
+      </td>
+    </tr>
   );
 }
 
-function DateCell({
+/**
+ * Tek hücrede plan + (varsa) gerçek tarih dikey gösterim.
+ * Plan üstte mavi, gerçek altta yeşil (+gecikme rozeti)
+ */
+function DualDateCell({
   planned,
   actual,
-  hideActual = false,
-  hideAll = false,
-  variant = "planned",
-  plannedRef,
 }: {
   planned?: string;
   actual?: string;
-  hideActual?: boolean;
-  hideAll?: boolean;
-  variant?: "planned" | "actual";
-  plannedRef?: string;
 }) {
-  if (hideAll) {
-    return <td className="px-2 py-2 border-b border-border/50 text-center"></td>;
-  }
-  if (variant === "planned") {
-    return (
-      <td className="px-2 py-2 border-b border-border/50 text-center">
-        {planned ? (
-          <span className="text-[11px] font-mono text-planned tabular-nums">
-            {formatDate(planned)}
-          </span>
-        ) : (
-          <span className="text-text3 text-xs">—</span>
-        )}
-      </td>
-    );
-  }
-  // actual
-  const delayDays = plannedRef && actual ? Math.ceil((new Date(actual).getTime() - new Date(plannedRef).getTime()) / 86400000) : null;
+  const delayDays =
+    planned && actual
+      ? Math.ceil((new Date(actual).getTime() - new Date(planned).getTime()) / 86400000)
+      : null;
   return (
-    <td className="px-2 py-2 border-b-2 border-border text-center">
-      {actual ? (
-        <>
-          <span className="text-[11px] font-mono text-realized font-semibold tabular-nums">
-            {formatDate(actual)}
-          </span>
-          {delayDays != null && delayDays !== 0 && (
-            <div className={cn("text-[9px] font-mono tabular-nums", delayDays > 0 ? "text-red" : "text-green")}>
-              {delayDays > 0 ? `+${delayDays}g` : `${delayDays}g`}
-            </div>
-          )}
-        </>
+    <td className="px-3 py-2 align-middle text-center">
+      {planned ? (
+        <div className="font-mono text-[10.5px] text-planned tabular-nums leading-tight whitespace-nowrap">
+          {formatDate(planned)}
+        </div>
       ) : (
-        <span className="text-text3 text-xs italic">bekleniyor</span>
+        <div className="text-text3 text-xs">—</div>
+      )}
+      {actual && (
+        <div className="mt-0.5 font-mono text-[10.5px] text-realized font-semibold tabular-nums leading-tight whitespace-nowrap">
+          {formatDate(actual)}
+          {delayDays != null && delayDays !== 0 && (
+            <span
+              className={cn(
+                "ml-1 px-1 rounded text-[9px]",
+                delayDays > 0 ? "bg-red/10 text-red" : "bg-green/10 text-green"
+              )}
+            >
+              {delayDays > 0 ? `+${delayDays}g` : `${delayDays}g`}
+            </span>
+          )}
+        </div>
       )}
     </td>
   );
@@ -460,7 +705,6 @@ function ProcForm({
   onClose: () => void;
   onSubmit: (data: Omit<ProcurementItem, "id" | "projectId">) => void;
 }) {
-  const [category, setCategory] = useState(initial?.category ?? "");
   const [material, setMaterial] = useState(initial?.material ?? "");
   const [supplier, setSupplier] = useState(initial?.supplier ?? "");
   const [quantity, setQuantity] = useState(initial?.quantity ?? 1);
@@ -469,8 +713,6 @@ function ProcForm({
   const [currency, setCurrency] = useState<Currency>(initial?.currency ?? "USD");
   const [status, setStatus] = useState<ProcurementItem["status"]>(initial?.status ?? "talep");
   const [isCritical, setIsCritical] = useState(initial?.isCritical ?? false);
-  const [rfqStartDate, setRfqStartDate] = useState(initial?.rfqStartDate ?? "");
-  const [rfqEndDate, setRfqEndDate] = useState(initial?.rfqEndDate ?? "");
   const [plannedPoDate, setPlannedPoDate] = useState(initial?.plannedPoDate ?? initial?.orderDate ?? "");
   const [plannedExwDate, setPlannedExwDate] = useState(initial?.plannedExwDate ?? "");
   const [plannedDeliveryDate, setPlannedDeliveryDate] = useState(initial?.plannedDeliveryDate ?? initial?.expectedDate ?? "");
@@ -483,11 +725,12 @@ function ProcForm({
       <div className="space-y-4">
         {/* Temel bilgi */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="Kategori">
-            <Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Solar Panel, Trafo, Kablo..." />
-          </Field>
-          <Field label="Malzeme">
-            <Input value={material} onChange={(e) => setMaterial(e.target.value)} />
+          <Field label="Malzeme" className="sm:col-span-2">
+            <Input
+              value={material}
+              onChange={(e) => setMaterial(e.target.value)}
+              placeholder="örn. Solar Panel 545Wp, NYY-O 5×16, Trafo 1600kVA..."
+            />
           </Field>
           <Field label="Tedarikçi" className="sm:col-span-2">
             <Input value={supplier} onChange={(e) => setSupplier(e.target.value)} />
@@ -557,13 +800,7 @@ function ProcForm({
               Planlanan Tarihler
             </span>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <Field label="RFQ Başlangıç">
-              <Input type="date" value={rfqStartDate} onChange={(e) => setRfqStartDate(e.target.value)} />
-            </Field>
-            <Field label="RFQ Bitiş">
-              <Input type="date" value={rfqEndDate} onChange={(e) => setRfqEndDate(e.target.value)} />
-            </Field>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="PO Tarihi">
               <Input type="date" value={plannedPoDate} onChange={(e) => setPlannedPoDate(e.target.value)} />
             </Field>
@@ -587,7 +824,8 @@ function ProcForm({
           variant="accent"
           onClick={() =>
             onSubmit({
-              category,
+              // category alanı schema'da zorunlu; UI'dan kaldırıldı, malzeme adıyla doldurulur
+              category: material,
               material,
               supplier: supplier || undefined,
               quantity,
@@ -596,8 +834,6 @@ function ProcForm({
               currency,
               status,
               isCritical,
-              rfqStartDate: rfqStartDate || undefined,
-              rfqEndDate: rfqEndDate || undefined,
               plannedPoDate: plannedPoDate || undefined,
               plannedExwDate: plannedExwDate || undefined,
               plannedDeliveryDate: plannedDeliveryDate || undefined,

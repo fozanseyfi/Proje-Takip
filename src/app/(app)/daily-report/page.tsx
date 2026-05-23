@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
-import { formatDate, toISODate } from "@/lib/utils";
+import { formatDate, toISODate, daysBetween } from "@/lib/utils";
 
 // Mock hava durumu — gerçek API entegrasyonunda Open-Meteo kullanılacak
 function mockWeather(date: string) {
@@ -56,6 +56,16 @@ export default function DailyReportPage() {
   const machineAttendance = useStore((s) => s.machineAttendance);
 
   const [date, setDate] = useState(toISODate(new Date()));
+
+  // Proje seçilince/değişince tarih aralık dışındaysa otomatik klamp et
+  useEffect(() => {
+    if (!project) return;
+    const td = toISODate(new Date());
+    const max = project.plannedEnd < td ? project.plannedEnd : td;
+    if (date < project.startDate) setDate(project.startDate);
+    else if (date > max) setDate(max);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
 
   const existing = useMemo(
     () => reports.find((r) => r.projectId === project?.id && r.reportDate === date),
@@ -126,11 +136,36 @@ export default function DailyReportPage() {
     toast("Günlük rapor kaydedildi", "success");
   }
 
+  // Tarih sınırları: proje başı/sonu + bugünden ileri gidilmez.
+  const today = toISODate(new Date());
+  const minDate = project?.startDate ?? "";
+  const maxDate = (() => {
+    if (!project) return today;
+    return project.plannedEnd < today ? project.plannedEnd : today;
+  })();
+
+  function clampDate(d: string): string {
+    if (!project) return d;
+    if (d < minDate) return minDate;
+    if (d > maxDate) return maxDate;
+    return d;
+  }
+
   function shift(delta: number) {
     const d = new Date(date);
     d.setDate(d.getDate() + delta);
-    setDate(toISODate(d));
+    setDate(clampDate(toISODate(d)));
   }
+
+  // Proje gün sayacı: tarih projenin kaçıncı günü?
+  const projectDayNum = project
+    ? daysBetween(project.startDate, date) + 1
+    : 0;
+  const projectTotalDays = project
+    ? daysBetween(project.startDate, project.plannedEnd) + 1
+    : 0;
+  const canPrev = date > minDate;
+  const canNext = date < maxDate;
 
   // Otomatik dahil edilenler
   const personnelToday = project
@@ -167,13 +202,39 @@ export default function DailyReportPage() {
       <Card className="mb-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex items-center gap-2">
-            <button onClick={() => shift(-1)} className="p-2 rounded-md bg-bg4 hover:bg-bg3">
+            <button
+              onClick={() => shift(-1)}
+              disabled={!canPrev}
+              className="p-2 rounded-md bg-bg4 hover:bg-bg3 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={canPrev ? "Önceki gün" : "Proje başlangıcındasın"}
+            >
               <ChevronLeft size={14} />
             </button>
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-44 font-mono" />
-            <button onClick={() => shift(1)} className="p-2 rounded-md bg-bg4 hover:bg-bg3">
+            <Input
+              type="date"
+              value={date}
+              min={minDate}
+              max={maxDate}
+              onChange={(e) => setDate(clampDate(e.target.value))}
+              className="w-44 font-mono"
+            />
+            <button
+              onClick={() => shift(1)}
+              disabled={!canNext}
+              className="p-2 rounded-md bg-bg4 hover:bg-bg3 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={canNext ? "Sonraki gün" : date === today ? "Bugünden ileri gidilemez" : "Proje sonundasın"}
+            >
               <ChevronRight size={14} />
             </button>
+          </div>
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-accent/10 border border-accent/30">
+            <span className="text-[10px] uppercase tracking-wider font-bold text-accent">
+              Proje Günü
+            </span>
+            <span className="font-mono font-bold text-accent">
+              {projectDayNum}
+            </span>
+            <span className="text-text3 font-mono text-xs">/ {projectTotalDays}</span>
           </div>
           <div className="ml-auto flex items-center gap-3">
             {existing ? (

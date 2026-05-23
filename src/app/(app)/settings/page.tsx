@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings, Save, Trash2 } from "lucide-react";
+import { Settings, Save, Trash2, Eye, Lock, Unlock } from "lucide-react";
 import { useStore, useCurrentProject } from "@/lib/store";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader } from "@/components/layout/page-header";
@@ -17,6 +17,7 @@ export default function SettingsPage() {
   const project = useCurrentProject();
   const updateProject = useStore((s) => s.updateProject);
   const deleteProject = useStore((s) => s.deleteProject);
+  const setProjectDemo = useStore((s) => s.setProjectDemo);
 
   const [form, setForm] = useState<Partial<Project>>({});
 
@@ -65,29 +66,22 @@ export default function SettingsPage() {
             <Field label="Konum">
               <Input value={form.location ?? ""} onChange={(e) => setForm({ ...form, location: e.target.value })} />
             </Field>
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="Enlem (lat)">
-                <Input
-                  type="number"
-                  step="0.0001"
-                  value={form.latitude ?? ""}
-                  onChange={(e) => setForm({ ...form, latitude: Number(e.target.value) || null })}
-                />
-              </Field>
-              <Field label="Boylam (lng)">
-                <Input
-                  type="number"
-                  step="0.0001"
-                  value={form.longitude ?? ""}
-                  onChange={(e) => setForm({ ...form, longitude: Number(e.target.value) || null })}
-                />
-              </Field>
-            </div>
+            <Field
+              label="Ana Yüklenici (Panel Sahibi)"
+              hint="İşverenle sözleşmesi olan tarafımız. Personel ekleme şirket listesinde otomatik gözükür; alt yüklenici listelerinde gözükmez."
+            >
+              <Input
+                value={form.mainContractorName ?? ""}
+                onChange={(e) => setForm({ ...form, mainContractorName: e.target.value })}
+                placeholder="örn. ABC Enerji A.Ş."
+              />
+            </Field>
             <Field label="Durum">
               <Select
                 value={form.status ?? "active"}
                 onChange={(e) => setForm({ ...form, status: e.target.value as Project["status"] })}
               >
+                <option value="draft">Taslak</option>
                 <option value="active">Aktif</option>
                 <option value="completed">Tamamlandı</option>
                 <option value="archived">Arşivlendi</option>
@@ -120,20 +114,13 @@ export default function SettingsPage() {
                 onChange={(e) => setForm({ ...form, contractEnd: e.target.value })}
               />
             </Field>
-            <Field label="Rapor Tarihi">
-              <Input
-                type="date"
-                value={form.reportDate ?? ""}
-                onChange={(e) => setForm({ ...form, reportDate: e.target.value })}
-              />
-            </Field>
           </div>
         </Card>
 
         <Card>
           <CardTitle>Finansal</CardTitle>
           <div className="space-y-3">
-            <Field label="Kurulu Güç (MW)">
+            <Field label="Kurulu Güç (MWp)">
               <Input
                 type="number"
                 step="0.01"
@@ -143,7 +130,7 @@ export default function SettingsPage() {
                 }
               />
             </Field>
-            <Field label="Toplam Bütçe">
+            <Field label="Sözleşme Bedeli">
               <Input
                 type="number"
                 value={form.totalBudget ?? ""}
@@ -163,6 +150,58 @@ export default function SettingsPage() {
           </div>
         </Card>
       </div>
+
+      <Card className="mt-4 border-accent/30">
+        <CardTitle>Örnek (Demo) Olarak İşaretle</CardTitle>
+        <div className="text-[12.5px] text-text2 leading-relaxed mb-3">
+          <strong>Bu projeyi platformda örnek/sergi projesi olarak işaretle.</strong> Demo
+          projede:
+          <ul className="list-disc pl-5 mt-1.5 space-y-0.5">
+            <li>Tüm yazma aksiyonları kilitlenir (Kaydet/Sil/Düzenle no-op).</li>
+            <li>Rapor tarihi <strong>15 Mayıs 2026</strong> tarihinde donmuş kalır.</li>
+            <li>Sayfa üstünde sarı banner görünür.</li>
+            <li>Diğer kullanıcılar Klonla ile kendi kopyalarını oluşturabilir.</li>
+          </ul>
+        </div>
+        {project.isDemo ? (
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (
+                confirm(
+                  `"${project.name}" projesi örnek modundan çıkarılsın mı? Yeniden düzenlenebilir hale gelir.`
+                )
+              ) {
+                setProjectDemo(project.id, false);
+                toast("Örnek modu kapatıldı — proje yeniden düzenlenebilir", "success");
+              }
+            }}
+          >
+            <Unlock size={14} /> Örnek Modunu Kapat
+          </Button>
+        ) : (
+          <Button
+            variant="accent"
+            onClick={() => {
+              if (
+                confirm(
+                  `"${project.name}" projesi örnek olarak işaretlensin mi? Bu sayfada yazma aksiyonları kilitlenecek.`
+                )
+              ) {
+                setProjectDemo(project.id, true);
+                toast("Proje örnek olarak işaretlendi — kilit aktif", "success");
+              }
+            }}
+          >
+            <Lock size={14} /> Bu Projeyi Örnek Olarak İşaretle
+          </Button>
+        )}
+        {project.isDemo && (
+          <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-yellow/15 text-yellow text-[11px] font-bold">
+            <Eye size={11} /> Şu an örnek modunda — değişiklikler kaydedilmez
+          </div>
+        )}
+      </Card>
 
       <Card className="mt-4 border-red/30">
         <CardTitle>Tehlikeli Bölge</CardTitle>

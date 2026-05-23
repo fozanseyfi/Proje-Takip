@@ -104,6 +104,8 @@ function buildProject(userId: string): Project {
     totalBudget: 5_160_000,
     budgetCurrency: "USD",
     status: "active",
+    mainContractorName:
+      SAMPLE_COMPANIES.find((c) => c.isMain)?.name ?? "Kontrolmatik Teknoloji A.Ş.",
     createdBy: userId,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

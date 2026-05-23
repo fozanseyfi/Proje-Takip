@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ================================================================
-   GES Proje Takip — Modern Profesyonel Tema
+   Proje Yönetim Platformu — Modern Profesyonel Tema
    Emerald primary · Amber accent · Pure white surfaces
 ================================================================ */
 
@@ -61,8 +61,11 @@
 
   /* Functional */
   --blue:   #3b82f6;
+  --navy:   #1e3a8a;
   --green:  var(--brand-600);
   --amber:  var(--sun-500);
+  /* "orange" alias artık planlama göstergeleri için kurumsal slate-mavi tonu kullanır */
+  --orange: #475569;
   --red:    #ef4444;
   --purple: #8b5cf6;
 
@@ -110,6 +113,8 @@
   --color-green:     var(--green);
   --color-red:       var(--red);
   --color-yellow:    var(--amber);
+  --color-orange:    var(--orange);
+  --color-navy:      var(--navy);
   --color-purple:    var(--purple);
   --color-text:      var(--text);
   --color-text2:     var(--text-muted);
@@ -158,6 +163,15 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+/* Safari/Chrome <summary> üçgen marker'ı gizle — Tailwind arbitrary class kullanmıyoruz
+   çünkü Turbopack/Tailwind 4'te encoding bug'ı var. */
+details > summary {
+  list-style: none;
+}
+details > summary::-webkit-details-marker {
+  display: none;
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -223,6 +237,86 @@ input[type="number"] {
   background-clip: text;
   color: transparent;
   animation: shimmer 6s linear infinite;
+}
+
+/* Buton arka planı boyunca akan parlama efekti — primary action butonları için */
+@keyframes shimmer-pan {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+.btn-shimmer-accent {
+  /* Platform yeşili gradient — brand-700 → brand-500, hafif parlama */
+  background: linear-gradient(
+    100deg,
+    var(--brand-700) 0%,
+    var(--brand-600) 35%,
+    color-mix(in srgb, var(--brand-500) 75%, white 25%) 50%,
+    var(--brand-600) 65%,
+    var(--brand-700) 100%
+  );
+  background-size: 280% 100%;
+  animation: shimmer-pan 5s linear infinite;
+  box-shadow: 0 4px 10px -2px color-mix(in srgb, var(--brand-600) 35%, transparent);
+}
+
+/* ================================================================
+   Global Page Loader — Brand Logo Animations
+================================================================ */
+
+/* Alttan yukarı emerald dolma (clip-path ile renkli logo katmanı). */
+@keyframes logo-fill-loop {
+  0%   { clip-path: inset(100% 0 0 0); }
+  45%  { clip-path: inset(0 0 0 0); }
+  55%  { clip-path: inset(0 0 0 0); }
+  100% { clip-path: inset(100% 0 0 0); }
+}
+
+/* Logo etrafında nefes alan emerald glow halkası. */
+@keyframes logo-glow-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 0 rgb(16 185 129 / 0.0),
+      0 12px 32px -6px rgb(16 185 129 / 0.35);
+  }
+  50% {
+    box-shadow:
+      0 0 0 14px rgb(16 185 129 / 0.0),
+      0 12px 32px -6px rgb(16 185 129 / 0.6);
+  }
+}
+
+/* Logo yüzeyinde aşağıdan yukarı geçen ince parlama bandı. */
+@keyframes logo-shimmer-pan {
+  0%   { transform: translateY(110%); opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translateY(-110%); opacity: 0; }
+}
+
+/* Accent dot — daha hızlı kalp atışı. */
+@keyframes logo-dot-beat {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.35); opacity: 0.7; }
+}
+
+/* Overlay backdrop fade-in. */
+@keyframes overlay-fade-in {
+  from { opacity: 0; backdrop-filter: blur(0px); }
+  to   { opacity: 1; backdrop-filter: blur(8px); }
+}
+.animate-overlay-fade { animation: overlay-fade-in 0.18s ease-out both; }
+
+/* Yatay ilerleme çubuğu — belirsiz süre. */
+@keyframes loader-bar {
+  0%   { left: -35%; right: 100%; }
+  60%  { left: 100%; right: -35%; }
+  100% { left: 100%; right: -35%; }
+}
+
+/* "Yükleniyor..." metni için harf-harf dalga (subtle). */
+@keyframes loader-text-dim {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
 }
 
 /* Focus ring */

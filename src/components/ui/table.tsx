@@ -16,8 +16,10 @@ export function Table({
   className,
   children,
 }: React.HTMLAttributes<HTMLTableElement>) {
+  // border-separate + border-spacing-0: sticky TH bug'ını önler.
+  // Borderlar TH/TD üzerindeki "border-b" sınıfları ile çiziliyor.
   return (
-    <table className={cn("w-full border-collapse text-sm", className)}>
+    <table className={cn("w-full border-separate border-spacing-0 text-sm", className)}>
       {children}
     </table>
   );
@@ -35,8 +37,8 @@ export function TH({
   return (
     <th
       className={cn(
-        "sticky top-16 z-20 bg-bg2 text-left px-4 py-3 text-text2 text-[11px] uppercase tracking-wider font-semibold border-b border-border whitespace-nowrap",
-        "shadow-[0_1px_0_0_var(--border)]",
+        "text-left px-4 py-3 text-text2 text-[11px] uppercase tracking-wider font-semibold whitespace-nowrap",
+        "bg-bg2 border-b border-border",
         className
       )}
       {...props}

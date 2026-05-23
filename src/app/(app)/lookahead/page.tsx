@@ -201,7 +201,7 @@ export default function LookaheadPage() {
           {/* KAPANAN KONULAR — collapsible */}
           {doneItems.length > 0 && (
             <details className="group rounded-xl border border-border bg-bg2/40 mb-4">
-              <summary className="cursor-pointer px-5 py-3 list-none [&::-webkit-details-marker]:hidden flex items-center gap-2">
+              <summary className="cursor-pointer px-5 py-3 list-none flex items-center gap-2">
                 <CheckCircle2 size={16} className="text-green" />
                 <span className="font-display text-sm font-bold text-text">Kapanan Konular</span>
                 <Badge variant="green">{doneItems.length}</Badge>

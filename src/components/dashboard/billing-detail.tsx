@@ -6,25 +6,41 @@ import { useStore, useCurrentProject } from "@/lib/store";
 import { Badge } from "@/components/ui/badge";
 import { CollapsibleCard } from "@/components/ui/collapsible-card";
 import { formatDate, formatMoney, cn } from "@/lib/utils";
-import type { BillingItem, Subcontractor } from "@/lib/store/types";
+import type { BillingItem, Subcontractor, PaymentMilestone } from "@/lib/store/types";
 
 const STATUS_LABEL: Record<BillingItem["status"], string> = {
   taslak: "Taslak",
   gonderildi: "Beklemede",
+  kismi: "Kısmi",
   odendi: "Ödendi",
   iptal: "İptal",
 };
-const STATUS_VARIANT: Record<BillingItem["status"], "gray" | "yellow" | "green" | "red"> = {
+const STATUS_VARIANT: Record<BillingItem["status"], "gray" | "yellow" | "blue" | "green" | "red"> = {
   taslak: "gray",
   gonderildi: "yellow",
+  kismi: "blue",
   odendi: "green",
   iptal: "red",
 };
+
+function getEffectiveStatus(b: BillingItem, milestones: PaymentMilestone[]): BillingItem["status"] {
+  if (b.status === "iptal") return "iptal";
+  let paid = 0;
+  for (const m of milestones) {
+    for (const p of m.payments ?? []) {
+      if (p.billingItemId === b.id) paid += p.amount;
+    }
+  }
+  if (paid <= 0) return b.status;
+  if (paid < b.amount - 0.005) return "kismi";
+  return "odendi";
+}
 
 export function BillingDetailWidget() {
   const project = useCurrentProject();
   const billing = useStore((s) => s.billing).filter((b) => b.projectId === project?.id);
   const subs = useStore((s) => s.subcontractors).filter((s) => s.projectId === project?.id);
+  const milestones = useStore((s) => s.paymentMilestones).filter((m) => m.projectId === project?.id);
 
   const ownerInvoices = useMemo(
     () =>
@@ -49,7 +65,9 @@ export function BillingDetailWidget() {
   return (
     <CollapsibleCard
       title="Faturalandırma Durumu"
-      icon={<Receipt size={14} className="text-accent" />}
+      icon={<Receipt size={18} />}
+      tone="green"
+      defaultOpen={false}
       link={{ href: "/billing", label: "Detay →" }}
     >
       <div className="px-5 py-4">
@@ -84,7 +102,7 @@ export function BillingDetailWidget() {
 
         {/* İŞVEREN FATURALARI — collapsible */}
         <details className="group rounded-lg border border-border bg-white">
-          <summary className="cursor-pointer px-3 py-2 list-none [&::-webkit-details-marker]:hidden flex items-center gap-2">
+          <summary className="cursor-pointer px-3 py-2 list-none flex items-center gap-2">
             <span className="text-[10px] uppercase tracking-wider font-bold text-text2">
               İşveren Faturaları
             </span>
@@ -92,14 +110,14 @@ export function BillingDetailWidget() {
             <ChevronDown size={14} className="ml-auto text-text3 transition-transform group-open:rotate-180" />
           </summary>
           <div className="border-t border-border max-h-64 overflow-y-auto">
-            <CompactBillingList items={ownerInvoices} currency={project.budgetCurrency} />
+            <CompactBillingList items={ownerInvoices} currency={project.budgetCurrency} milestones={milestones} />
           </div>
         </details>
 
         {/* ALT YÜKLENİCİLER — collapsible */}
         {subs.length > 0 && (
           <details className="group rounded-lg border border-border bg-white mt-2">
-            <summary className="cursor-pointer px-3 py-2 list-none [&::-webkit-details-marker]:hidden flex items-center gap-2">
+            <summary className="cursor-pointer px-3 py-2 list-none flex items-center gap-2">
               <Users2 size={12} className="text-accent" />
               <span className="text-[10px] uppercase tracking-wider font-bold text-text2">
                 Alt Yükleniciler
@@ -109,7 +127,7 @@ export function BillingDetailWidget() {
             </summary>
             <div className="border-t border-border max-h-96 overflow-y-auto p-3 space-y-2">
               {subs.map((sc) => (
-                <SubcontractorMiniBlock key={sc.id} sub={sc} bills={billing} />
+                <SubcontractorMiniBlock key={sc.id} sub={sc} bills={billing} milestones={milestones} />
               ))}
             </div>
           </details>
@@ -139,18 +157,32 @@ function Metric({
   );
 }
 
-function CompactBillingList({ items, currency }: { items: BillingItem[]; currency: string }) {
+function CompactBillingList({
+  items,
+  currency,
+  milestones,
+}: {
+  items: BillingItem[];
+  currency: string;
+  milestones: PaymentMilestone[];
+}) {
   if (items.length === 0) {
     return <div className="px-3 py-4 text-center text-xs text-text3">Henüz fatura yok.</div>;
   }
+  const todayISO = new Date().toISOString().slice(0, 10);
   return (
     <table className="w-full text-xs">
       <tbody>
         {items.map((b, i) => {
-          const isPaid = b.status === "odendi";
-          const isOverdue = !isPaid && b.dueDate && new Date(b.dueDate) < new Date();
+          const effStatus = getEffectiveStatus(b, milestones);
+          const isPaid = effStatus === "odendi";
+          const isOverdue =
+            !isPaid &&
+            effStatus !== "iptal" &&
+            !!b.dueDate &&
+            b.dueDate < todayISO;
           return (
-            <tr key={b.id} className="border-b border-border last:border-b-0 hover:bg-bg2/40">
+            <tr key={b.id} className={cn("border-b border-border last:border-b-0 hover:bg-bg2/40", isOverdue && "bg-red/5")}>
               <td className="py-2 px-3 text-text3 font-mono w-8">{i + 1}</td>
               <td className="py-2 px-1">
                 <div className="font-medium truncate max-w-[14rem]">{b.description}</div>
@@ -163,7 +195,12 @@ function CompactBillingList({ items, currency }: { items: BillingItem[]; currenc
                 {formatMoney(b.amount, currency as "TRY" | "USD" | "EUR", 0)}
               </td>
               <td className="py-2 px-2 text-right">
-                <Badge variant={STATUS_VARIANT[b.status]}>{STATUS_LABEL[b.status]}</Badge>
+                <div className="inline-flex items-center gap-1 flex-wrap justify-end">
+                  <Badge variant={STATUS_VARIANT[effStatus]}>{STATUS_LABEL[effStatus]}</Badge>
+                  {isOverdue && (
+                    <Badge variant="red">Gecikti</Badge>
+                  )}
+                </div>
               </td>
             </tr>
           );
@@ -173,7 +210,15 @@ function CompactBillingList({ items, currency }: { items: BillingItem[]; currenc
   );
 }
 
-function SubcontractorMiniBlock({ sub, bills }: { sub: Subcontractor; bills: BillingItem[] }) {
+function SubcontractorMiniBlock({
+  sub,
+  bills,
+  milestones,
+}: {
+  sub: Subcontractor;
+  bills: BillingItem[];
+  milestones: PaymentMilestone[];
+}) {
   const myBills = useMemo(
     () =>
       bills.filter(
@@ -188,7 +233,7 @@ function SubcontractorMiniBlock({ sub, bills }: { sub: Subcontractor; bills: Bil
 
   return (
     <details className="group rounded-md bg-bg2 border border-border">
-      <summary className="cursor-pointer px-3 py-2 list-none [&::-webkit-details-marker]:hidden">
+      <summary className="cursor-pointer px-3 py-2 list-none">
         <div className="flex items-center gap-2 mb-1.5">
           <ChevronDown size={12} className="text-text3 transition-transform group-open:rotate-180 shrink-0" />
           <div className="font-semibold text-xs text-text truncate flex-1">{sub.name}</div>
@@ -209,7 +254,7 @@ function SubcontractorMiniBlock({ sub, bills }: { sub: Subcontractor; bills: Bil
       </summary>
       {myBills.length > 0 && (
         <div className="border-t border-border bg-white">
-          <CompactBillingList items={myBills} currency={sub.currency} />
+          <CompactBillingList items={myBills} currency={sub.currency} milestones={milestones} />
         </div>
       )}
     </details>

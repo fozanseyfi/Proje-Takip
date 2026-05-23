@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Plus, FolderKanban, MapPin, Calendar, ArrowRight, Sun } from "lucide-react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { Plus, FolderKanban, MapPin, Calendar, ArrowRight, Sun, ChevronDown, Trash2, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useStore } from "@/lib/store";
+import { useStore, isDemoProject } from "@/lib/store";
+import type { Project, ProjectStatus } from "@/lib/store/types";
+import { CloneProjectDialog } from "@/components/projects/clone-project-dialog";
 import { Card, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -16,12 +19,39 @@ import { useCurrentUser } from "@/lib/store";
 import type { Currency } from "@/lib/utils";
 import { SAMPLE_PROJECT_NAME } from "@/lib/data/sample-loader";
 
+const STATUS_LABEL: Record<ProjectStatus, string> = {
+  draft: "Taslak",
+  active: "Aktif",
+  completed: "Tamamlandı",
+  archived: "Arşiv",
+};
+const STATUS_VARIANT: Record<ProjectStatus, "gray" | "yellow" | "green" | "blue"> = {
+  draft: "yellow",
+  active: "green",
+  completed: "blue",
+  archived: "gray",
+};
+
 export default function ProjectsPage() {
   const projects = useStore((s) => s.projects);
   const createProject = useStore((s) => s.createProject);
+  const updateProject = useStore((s) => s.updateProject);
   const setCurrentProject = useStore((s) => s.setCurrentProject);
+  const wipeAndStartFresh = useStore((s) => s.wipeAndStartFresh);
   const user = useCurrentUser();
   const [open, setOpen] = useState(false);
+  const [cloneSource, setCloneSource] = useState<Project | null>(null);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // ?new=1 → diyalog otomatik aç
+  useEffect(() => {
+    if (searchParams?.get("new") === "1") {
+      setOpen(true);
+      // URL'i temizle
+      router.replace("/projects");
+    }
+  }, [searchParams, router]);
 
   // Örnek proje her zaman en başta sabit
   const sortedProjects = useMemo(
@@ -42,6 +72,8 @@ export default function ProjectsPage() {
     installedCapacityMw: "",
     totalBudget: "",
     budgetCurrency: "TRY" as Currency,
+    mainContractorName: "",
+    investorName: "",
   });
 
   function submit() {
@@ -61,10 +93,20 @@ export default function ProjectsPage() {
       totalBudget: form.totalBudget ? Number(form.totalBudget) : null,
       budgetCurrency: form.budgetCurrency,
       status: "active",
+      mainContractorName: form.mainContractorName.trim() || undefined,
+      investorName: form.investorName.trim() || undefined,
       createdBy: user.id,
     });
     setOpen(false);
-    setForm({ ...form, name: "", location: "", installedCapacityMw: "", totalBudget: "" });
+    setForm({
+      ...form,
+      name: "",
+      location: "",
+      installedCapacityMw: "",
+      totalBudget: "",
+      mainContractorName: "",
+      investorName: "",
+    });
   }
 
   return (
@@ -74,9 +116,27 @@ export default function ProjectsPage() {
         description="Tüm projelerin listesi"
         icon={FolderKanban}
         actions={
-          <Button variant="accent" onClick={() => setOpen(true)}>
-            <Plus size={14} /> Yeni Proje
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (
+                  confirm(
+                    "TÜM örnek verileri (Ankara Polatlı GES projesi, personel, makine, alt yüklenici, atamalar) silinecek. Hesabın korunur. Devam edilsin mi?"
+                  )
+                ) {
+                  wipeAndStartFresh();
+                  window.location.reload();
+                }
+              }}
+              className="text-red border-red/40 hover:bg-red/5"
+            >
+              <Trash2 size={14} /> Örnekleri Sil · Sıfırdan Başla
+            </Button>
+            <Button variant="accent" onClick={() => setOpen(true)}>
+              <Plus size={14} /> Yeni Proje
+            </Button>
+          </>
         }
       />
 
@@ -117,11 +177,19 @@ export default function ProjectsPage() {
                     {p.location}
                   </div>
                 </div>
-                <Badge
-                  variant={p.status === "active" ? "green" : p.status === "completed" ? "blue" : "gray"}
-                >
-                  {p.status}
-                </Badge>
+                {isDemoProject(p) ? (
+                  <span
+                    className="inline-flex items-center px-2.5 h-7 rounded-md border border-accent/30 bg-accent/8 text-accent text-[11px] font-bold uppercase tracking-wider shrink-0"
+                    title="Örnek proje — durumu değiştirilemez"
+                  >
+                    Örnek Proje
+                  </span>
+                ) : (
+                  <StatusSelector
+                    status={p.status}
+                    onChange={(next) => updateProject(p.id, { status: next })}
+                  />
+                )}
               </div>
               <div className="space-y-2 text-xs text-text2 mb-4">
                 <div className="flex items-center gap-2">
@@ -159,6 +227,16 @@ export default function ProjectsPage() {
                     Aç <ArrowRight size={12} />
                   </Button>
                 </Link>
+                {isDemoProject(p) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCloneSource(p)}
+                    title="Bu örnek projeyi klonla"
+                  >
+                    <Copy size={12} /> Klonla
+                  </Button>
+                )}
                 <Link href="/settings">
                   <Button
                     variant="ghost"
@@ -189,6 +267,20 @@ export default function ProjectsPage() {
               value={form.location}
               onChange={(e) => setForm({ ...form, location: e.target.value })}
               placeholder="il, ilçe"
+            />
+          </Field>
+          <Field label="Ana Yüklenici (Panel Sahibi)" hint="Personel/makine ekleme şirket listesinde otomatik gözükür">
+            <Input
+              value={form.mainContractorName}
+              onChange={(e) => setForm({ ...form, mainContractorName: e.target.value })}
+              placeholder="örn. Kontrolmatik Teknoloji A.Ş."
+            />
+          </Field>
+          <Field label="Yatırımcı (İşveren)" hint="Projenin sahibi firma">
+            <Input
+              value={form.investorName}
+              onChange={(e) => setForm({ ...form, investorName: e.target.value })}
+              placeholder="örn. ABC Enerji A.Ş."
             />
           </Field>
           <Field label="Başlangıç Tarihi">
@@ -238,6 +330,69 @@ export default function ProjectsPage() {
           <Button variant="accent" onClick={submit}>Oluştur</Button>
         </DialogFooter>
       </Dialog>
+
+      <CloneProjectDialog
+        open={!!cloneSource}
+        onClose={() => setCloneSource(null)}
+        source={cloneSource}
+      />
     </>
+  );
+}
+
+function StatusSelector({
+  status,
+  onChange,
+}: {
+  status: ProjectStatus;
+  onChange: (s: ProjectStatus) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const variant = STATUS_VARIANT[status];
+  const variantBg: Record<string, string> = {
+    green: "bg-green/12 text-green border-green/30",
+    yellow: "bg-yellow/12 text-yellow border-yellow/30",
+    blue: "bg-blue/12 text-blue border-blue/30",
+    gray: "bg-bg2 text-text3 border-border",
+  };
+  const options: ProjectStatus[] = ["draft", "active", "completed"];
+  return (
+    <div className="relative">
+      <button
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className={cn(
+          "inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold uppercase tracking-wider transition-all",
+          variantBg[variant]
+        )}
+      >
+        {STATUS_LABEL[status]}
+        <ChevronDown size={10} className={cn("transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="absolute top-7 right-0 z-40 min-w-[120px] py-1 rounded-lg bg-white border border-border shadow-medium">
+          {options.map((opt) => (
+            <button
+              key={opt}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onChange(opt);
+                setOpen(false);
+              }}
+              className={cn(
+                "block w-full text-left px-3 py-1.5 text-xs hover:bg-bg2 transition-colors",
+                opt === status ? "text-accent font-bold" : "text-text2"
+              )}
+            >
+              {STATUS_LABEL[opt]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

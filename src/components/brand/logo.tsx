@@ -1,5 +1,12 @@
 import { cn } from "@/lib/utils";
 
+/**
+ * Marka: Proje Yönetim Platformu
+ * - Logo işareti: koyu slate zeminde beyaz "stacked bars" (proje fazları)
+ *   ve sağ üstte küçük emerald nokta (canlı / aktif).
+ * - Renk paleti: slate-900 → slate-700 gradient (profesyonel, sektör-bağımsız).
+ */
+
 export function Logo({
   size = 28,
   showText = true,
@@ -17,13 +24,13 @@ export function Logo({
     <div className={cn("inline-flex items-center gap-2.5", className)}>
       <LogoMark size={size} />
       {showText && (
-        <div className="leading-tight">
-          <div className={cn("font-display font-extrabold text-text tracking-tight", textClassName)}>
-            GES <span className="text-accent">Takip</span>
+        <div className="leading-tight min-w-0">
+          <div className={cn("font-display font-extrabold text-text tracking-tight truncate", textClassName)}>
+            Proje Yönetim <span className="text-shimmer">Platformu</span>
           </div>
           {!compact && (
             <div className="text-[10px] text-text3 font-medium tracking-wider uppercase mt-0.5">
-              Proje Yönetim Platformu
+              EPC · Saha · Finansal
             </div>
           )}
         </div>
@@ -35,23 +42,39 @@ export function Logo({
 export function LogoMark({ size = 28, className }: { size?: number; className?: string }) {
   return (
     <span
-      className={cn("inline-flex items-center justify-center rounded-xl shadow-sm", className)}
+      className={cn(
+        "inline-flex items-center justify-center rounded-xl shadow-sm relative overflow-hidden",
+        className
+      )}
       style={{
         width: size,
         height: size,
-        background: "linear-gradient(135deg, #10b981 0%, #047857 100%)",
+        background:
+          "linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #334155 100%)",
       }}
     >
-      <SunIcon size={Math.round(size * 0.58)} />
+      <BarsMark size={Math.round(size * 0.55)} />
+      {/* Sağ üst accent nokta */}
+      <span
+        className="absolute rounded-full bg-accent shadow-[0_0_0_2px_rgba(15,23,42,1)]"
+        style={{
+          width: Math.max(4, Math.round(size * 0.18)),
+          height: Math.max(4, Math.round(size * 0.18)),
+          top: Math.round(size * 0.14),
+          right: Math.round(size * 0.14),
+        }}
+      />
     </span>
   );
 }
 
-function SunIcon({ size }: { size: number }) {
+/** Üç yükselen sütun — proje fazları / ilerleme. */
+function BarsMark({ size }: { size: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
-      <circle cx="12" cy="12" r="4" fill="#fbbf24" stroke="#fbbf24" />
-      <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4l1.4-1.4M17 7l1.4-1.4" />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className="text-white">
+      <rect x="3" y="14" width="4.5" height="7" rx="1" fill="currentColor" opacity="0.55" />
+      <rect x="9.75" y="9" width="4.5" height="12" rx="1" fill="currentColor" opacity="0.8" />
+      <rect x="16.5" y="4" width="4.5" height="17" rx="1" fill="currentColor" />
     </svg>
   );
 }

@@ -17,7 +17,7 @@ export type MachineType =
 
 export type FuelType = "dizel" | "benzin" | "elektrik" | "diger";
 
-export type ProjectStatus = "active" | "archived" | "completed";
+export type ProjectStatus = "draft" | "active" | "completed" | "archived";
 
 export type Priority = "low" | "medium" | "high" | "critical";
 
@@ -47,8 +47,16 @@ export interface Project {
   totalBudget?: number | null;
   budgetCurrency: Currency;
   status: ProjectStatus;
+  /** Panel sahibi / ana yüklenici firma adı — işverenle sözleşmesi olan tarafımız.
+   *  Hiçbir alt yüklenici listesinde gözükmez ama personel/makine ekleme şirket
+   *  seçicisinde her zaman seçilebilir olur. */
+  mainContractorName?: string;
+  /** Yatırımcı (işveren) firma adı — projenin sahibi. */
+  investorName?: string;
   publicShareToken?: string | null;
   publicShareExpiresAt?: string | null;
+  /** Demo/örnek proje — UI'da banner gösterilir, tüm yazma aksiyonları no-op. */
+  isDemo?: boolean;
   createdBy: string;       // userId
   createdAt: string;
   updatedAt: string;
@@ -76,6 +84,34 @@ export interface Invitation {
   acceptedAt?: string | null;
 }
 
+/** İlişki tipi:
+ * - FS: Finish→Start (A bitince B başlar)
+ * - SS: Start→Start (A başlayınca B başlar)
+ * - FF: Finish→Finish (A bitince B biter)
+ */
+export type PredecessorType = "FS" | "SS" | "FF";
+
+export interface PredecessorLink {
+  wbsCode: string;   // bağlanılan öncül kalemin kodu
+  type: PredecessorType;
+  lagDays: number;   // + öteleme / − ön çekim
+  /** Lag birimi:
+   *  - "calendar"  → Takvim günü (Cmt/Pz dahil, default)
+   *  - "work"      → Cumartesi-Pazar hariç (5 günlük iş haftası)
+   *  - "no-sunday" → Pazar hariç (6 günlük iş haftası, Cmt çalışılır)
+   */
+  lagUnit?: "calendar" | "work" | "no-sunday";
+}
+
+/**
+ * Aktivite tipi (PMP standart):
+ * - "work" (default): ölçülebilir iş. Miktar × birim. Gün-gün dağıtılır.
+ * - "milestone": tek tarih olayı (sözleşme imzası, izin, test başladı). 0% veya 100%.
+ *
+ * Boş bırakılırsa "work" varsayılır (eski kayıtlarla geriye uyum).
+ */
+export type ActivityType = "work" | "milestone";
+
 export interface WbsItem {
   id: string;
   projectId: string;
@@ -88,10 +124,41 @@ export interface WbsItem {
   quantity: number;
   unit: string;
   discipline?: Discipline;
+  /** Aktivite tipi — work (default) veya milestone. */
+  activityType?: ActivityType;
+  /** Milestone için planlanan tek tarih. */
+  milestoneDate?: string;
+  /** Milestone için gerçekleşme tarihi (yapıldıysa). */
+  milestoneCompletedAt?: string;
+  /**
+   * PMP "Estimate Activity Durations" — tahmini süre (çalışma günü).
+   * Planlama sihirbazı default başlangıç değeri olarak bu alanı kullanır.
+   * Boş ise sihirbaz kendi tahmin eder (miktar tabanlı veya 10 gün).
+   */
+  estimatedDurationDays?: number;
+  /**
+   * Bu aktivitenin çalışma haftası şablonu:
+   * - "mon-fri" → Pzt-Cum (Cmt/Pz kapalı)
+   * - "mon-sat" → Pzt-Cmt (Pz kapalı, Cmt açık)
+   * - "mon-sun" → Pzt-Pz (her gün açık)
+   * Sihirbaz açılırken default Cmt/Pz seçimini bu alanı baz alarak set eder.
+   */
+  workweek?: "mon-fri" | "mon-sat" | "mon-sun";
+  /**
+   * Zamanlama tipi:
+   * - "asap" (default) → forward pass (earliestStart) ile en erken konuma yerleşir.
+   * - "alap"           → backward pass (latestStart) ile projeyi geciktirmeden
+   *                      en geç konuma yerleşir. Tedarik / commissioning gibi
+   *                      geç yapılması doğru olan kalemler için.
+   * Boş bırakılırsa "asap" kabul edilir.
+   */
+  scheduleType?: "asap" | "alap";
   plannedStart?: string;
   plannedEnd?: string;
   realizedStart?: string;
   realizedEnd?: string;
+  /** Öncüllükler — bu kalemin bağlı olduğu önceki kalemler. */
+  predecessors?: PredecessorLink[];
   deletedAt?: string | null;
 }
 
@@ -108,7 +175,8 @@ export interface PersonnelMaster {
   discipline: Discipline;
   jobTitle?: string;
   phone?: string;
-  startDate?: string;
+  startDate?: string;       // İşe giriş tarihi (firmaya)
+  terminationDate?: string; // İşten çıkış tarihi (boşsa hala çalışıyor)
   dailyRate?: number;
   dailyRateCurrency?: Currency;
   status: "active" | "inactive";
@@ -125,6 +193,12 @@ export interface MachineMaster {
   machineType: MachineType;
   licensePlate?: string;
   company: string;
+  /** Operatör — PersonnelMaster.id'sine bağlı. Personel listesinden seçilir. */
+  operatorPersonnelId?: string;
+  /** İş başı tarihi — sahaya/firmaya giriş. */
+  startDate?: string;
+  /** Ayrıldığı tarih — boşsa hâlâ aktif. */
+  terminationDate?: string;
   dailyRate?: number;
   dailyRateCurrency?: Currency;
   fuelType?: FuelType;
@@ -159,6 +233,8 @@ export interface PersonnelAttendance {
   date: string;
   present: boolean;
   hours: number;
+  /** Raporlu (sick leave): "A" olarak gösterilir, biz ödüyormuş gibi tam yevmiye sayılır. */
+  status?: "rapor";
   location?: string;
   notes?: string;
   recordedBy: string;
@@ -269,8 +345,58 @@ export interface BillingItem {
   issueDate: string;
   dueDate?: string;
   paidDate?: string;
-  status: "taslak" | "gonderildi" | "odendi" | "iptal";
+  status: "taslak" | "gonderildi" | "kismi" | "odendi" | "iptal";
   notes?: string;
+}
+
+/**
+ * Hakediş planı — işveren ya da alt yüklenici için tek bir taksit.
+ * direction === "owner_incoming" → işverenden alacağımız (proje bazlı, subcontractorId boş)
+ * direction === "subcontractor_outgoing" → alt yükleniciye ödenecek (subcontractorId zorunlu)
+ *
+ * status:
+ * - planned: henüz fatura/ödeme yapılmadı (tarih geçtiyse "gecikmiş" sayılır — UI'da hesaplanır)
+ * - realized: tam tutar gerçekleşti (fatura kesildi / alındı)
+ * - partial: kısmi gerçekleşti
+ * - cancelled: iptal edildi
+ */
+export type PaymentMilestoneStatus = "planned" | "realized" | "partial" | "cancelled";
+
+/**
+ * Bir hakedişe bağlı tek bir ödeme kaydı.
+ * Kısmi ödemeler için bir hakediş altında birden çok kayıt olabilir.
+ */
+export interface PaymentEntry {
+  id: string;
+  date: string;
+  amount: number;
+  /** Bağlı fatura (varsa) — faturadan çekilen ödeme. */
+  billingItemId?: string;
+  notes?: string;
+  recordedAt: string;
+}
+
+export interface PaymentMilestone {
+  id: string;
+  projectId: string;
+  direction: BillingDirection;
+  subcontractorId?: string;       // sadece subcontractor_outgoing için
+  sequenceNo: number;             // 1, 2, 3 ...
+  description: string;            // "Hakediş No.1 — Mart 2026"
+  plannedDate: string;            // ISO
+  plannedAmount: number;
+  currency: Currency;
+  status: PaymentMilestoneStatus;
+  /** Ödeme defteri — kısmi/tam tüm ödeme kayıtları (kronolojik). */
+  payments?: PaymentEntry[];
+  /** Toplam alınan (payments.amount toplamı) — UI için önbellek. */
+  actualAmount?: number;
+  /** Son ödeme tarihi — UI için önbellek (eski kayıtlar için uyumluluk alanı). */
+  actualDate?: string;
+  billingItemId?: string;         // ilişkili fatura (varsa)
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
@@ -359,4 +485,69 @@ export interface NotificationItem {
   link?: string;
   readAt?: string | null;
   createdAt: string;
+}
+
+// ============================================================
+// Teslim Alma (GES Commissioning Checklist)
+// ============================================================
+
+/**
+ * Bir checklist maddesinin durumu:
+ * - "pending": henüz cevaplanmadı
+ * - "ok":      uygun (✓)
+ * - "fail":    uygun değil (✗) — Major NCR'a girer
+ * - "conditional": şartlı uygun (◐) — Punch-list'e girer, şart belirtilmeli
+ */
+export type TeslimAlmaStatus = "pending" | "ok" | "fail" | "conditional";
+
+/**
+ * Tek bir maddenin yanıt kaydı.
+ */
+export interface TeslimAlmaItemResult {
+  status: TeslimAlmaStatus;
+  /** Şartlı (conditional) seçildiğinde gerekli — şartın açıklaması. */
+  condition?: string;
+  /** Opsiyonel ek açıklama / eksik/hata detayı. */
+  note?: string;
+  /** Son güncelleme zamanı (ISO). */
+  updatedAt: string;
+}
+
+/**
+ * Bir rapor için genel proje + denetim üst-bilgileri.
+ * `inspectionDate` otomatik = bugün; `inspectorName` = currentUser.fullName.
+ * Diğer alanlar manuel doldurulur.
+ */
+export interface TeslimAlmaMeta {
+  inspectorName?: string;
+  inspectorTitle?: string;
+  ownerRepName?: string;
+  ownerRepTitle?: string;
+  epcRepName?: string;
+  epcRepTitle?: string;
+  inspectionDate: string;
+  /** Genel karar: tüm cevaplar değerlendirildikten sonra denetleyenin nihai kararı. */
+  overallDecision?: "approved" | "rejected" | "conditional";
+  generalNotes?: string;
+  /** Saha bilgileri (PDF'in PROJE BİLGİLERİ bölümüne girer; projeden de türetilebilir). */
+  dcCapacityKwp?: number;
+  acCapacityKwe?: number;
+  panelBrandModel?: string;
+  panelCount?: number;
+  inverterBrandModel?: string;
+  inverterCount?: number;
+  epcContractor?: string;
+}
+
+/**
+ * Bir proje için saha denetim / teslim alma raporu (tek kayıt).
+ * `items[itemId]` ile maddelere erişilir; bilinmeyen itemId → "pending" varsayılır.
+ */
+export interface TeslimAlmaReport {
+  projectId: string;
+  meta: TeslimAlmaMeta;
+  /** itemId → result. Mevcut olmayan id'ler "pending" varsayılır. */
+  items: Record<string, TeslimAlmaItemResult>;
+  createdAt: string;
+  updatedAt: string;
 }

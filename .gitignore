@@ -15,7 +15,11 @@
 
 # next.js
 /.next/
+/.next-sandbox/
 /out/
+
+# IDE/scratch
+/mockups/
 
 # production
 /build

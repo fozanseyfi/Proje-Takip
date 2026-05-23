@@ -23,8 +23,8 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "GES Proje Takip",
-  description: "Güneş Enerjisi Santrali proje yönetim platformu",
+  title: "Proje Yönetim Platformu",
+  description: "EPC odaklı proje yönetim platformu — GES, RES, HES ve diğer altyapı projeleri",
 };
 
 export const viewport: Viewport = {

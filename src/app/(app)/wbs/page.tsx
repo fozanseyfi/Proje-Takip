@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   FolderTree,
   Plus,
@@ -17,6 +18,8 @@ import {
   Layers2,
   Layers,
   FileText,
+  FileSpreadsheet,
+  Wand2,
 } from "lucide-react";
 import { useStore, useCurrentProject, useProjectWbs } from "@/lib/store";
 import { PageHeader } from "@/components/layout/page-header";
@@ -31,7 +34,26 @@ import {
   computeHierarchicalWeights,
   getParentWeightSummaries,
 } from "@/lib/calc/sections";
-import type { WbsItem } from "@/lib/store/types";
+import type { WbsItem, Discipline } from "@/lib/store/types";
+import { exportWbsToExcel, exportWbsToPDF } from "@/lib/export/wbs-export";
+
+// Disiplin renkleri ve Türkçe etiketleri
+const DISCIPLINE_VARIANT: Record<Discipline, "blue" | "yellow" | "red" | "purple" | "gray" | "accent"> = {
+  mekanik: "blue",
+  elektrik: "yellow",
+  insaat: "red",
+  muhendislik: "purple",
+  idari: "gray",
+  diger: "accent",
+};
+const DISCIPLINE_LABEL: Record<Discipline, string> = {
+  mekanik: "Mekanik",
+  elektrik: "Elektrik",
+  insaat: "İnşaat",
+  muhendislik: "Mühendislik",
+  idari: "İdari",
+  diger: "Diğer",
+};
 
 type ViewMode = "all" | "main" | "sub" | "items";
 
@@ -56,6 +78,7 @@ export default function WbsPage() {
   const addWbs = useStore((s) => s.addWbs);
   const updateWbs = useStore((s) => s.updateWbs);
   const softDeleteWbs = useStore((s) => s.softDeleteWbs);
+  const hasCustomTemplate = useStore((s) => !!s.customWbsTemplate?.length);
 
   const [editing, setEditing] = useState<WbsItem | null>(null);
   const [creating, setCreating] = useState(false);
@@ -240,12 +263,34 @@ export default function WbsPage() {
             ) : (
               <span className="w-4 shrink-0" />
             )}
-            <span className="font-mono text-xs shrink-0">{w.code}</span>
-            <span className="truncate">{w.name}</span>
+            <button
+              type="button"
+              onClick={() => setEditing(w)}
+              className="font-mono text-xs shrink-0 hover:text-accent hover:underline cursor-pointer"
+              title="Düzenle"
+            >
+              {w.code}
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing(w)}
+              className="truncate text-left hover:text-accent hover:underline cursor-pointer"
+              title="Düzenle"
+            >
+              {w.name}
+            </button>
             {w.discipline && (
-              <Badge variant="gray" className="ml-1.5 shrink-0">
-                {w.discipline}
+              <Badge variant={DISCIPLINE_VARIANT[w.discipline]} className="ml-1.5 shrink-0">
+                {DISCIPLINE_LABEL[w.discipline]}
               </Badge>
+            )}
+            {w.isLeaf && w.activityType === "milestone" && (
+              <span
+                title="Milestone — kilometre taşı (tek tarih, miktar yok)"
+                className="ml-1.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-purple/15 text-purple"
+              >
+                ◆ Milestone
+              </span>
             )}
           </div>
         </td>
@@ -321,6 +366,15 @@ export default function WbsPage() {
 
         <td className="px-3 py-2.5 border-b border-border">
           <div className="flex gap-1 justify-end">
+            {w.isLeaf && (
+              <Link
+                href={`/planning?code=${encodeURIComponent(w.code)}&wiz=1`}
+                className="p-1.5 rounded-lg text-text3 hover:bg-accent/10 hover:text-accent transition-colors"
+                title="Planla (sihirbaz)"
+              >
+                <Wand2 size={12} />
+              </Link>
+            )}
             <button
               onClick={() => setEditing(w)}
               className="p-1.5 rounded-lg text-text3 hover:bg-bg3 hover:text-accent transition-colors"
@@ -429,9 +483,46 @@ export default function WbsPage() {
         description={`${totalNodes} madde · ${l1Count} ana başlık · ${l2Count} alt başlık · ${leafCount} iş kalemi`}
         icon={FolderTree}
         actions={
-          <Button variant="accent" onClick={() => setCreating(true)}>
-            <Plus size={14} /> Yeni WBS
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              onClick={() => exportWbsToExcel(project?.name ?? "Proje", sorted, hierarchicalMap)}
+              disabled={!project || sorted.length === 0}
+              className="text-green border-green/40 hover:bg-green/5"
+            >
+              <FileSpreadsheet size={14} /> Excel
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => exportWbsToPDF(project?.name ?? "Proje", sorted, hierarchicalMap)}
+              disabled={!project || sorted.length === 0}
+              className="text-red border-red/40 hover:bg-red/5"
+            >
+              <FileText size={14} /> PDF
+            </Button>
+            {!hasCustomTemplate && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (!project) return;
+                  if (
+                    confirm(
+                      `"${project.name}" projesindeki mevcut WBS yapısı, BUNDAN SONRA AÇILACAK TÜM YENİ PROJELERİN şablonu olarak kaydedilecek.\n\nDevam edilsin mi?`
+                    )
+                  ) {
+                    useStore.getState().saveProjectWbsAsTemplate(project.id);
+                    alert("Mevcut WBS yapısı şablon olarak kaydedildi. Yeni projeler bu yapıyı kullanacak.");
+                  }
+                }}
+                className="text-accent border-accent/40 hover:bg-accent/5"
+              >
+                <Sparkles size={14} /> Şablon Yap
+              </Button>
+            )}
+            <Button variant="accent" onClick={() => setCreating(true)}>
+              <Plus size={14} /> Yeni WBS
+            </Button>
+          </>
         }
       />
 
@@ -518,6 +609,36 @@ export default function WbsPage() {
           value={`${autoCount}`}
           sub="seviyede eşit dağıtım (kullanıcı girmemiş)"
           icon={<Sparkles size={16} />}
+          extra={(() => {
+            const autoSummaries = parentSummaries.filter((p) => p.isAutoMode);
+            if (autoSummaries.length === 0) return null;
+            const names = autoSummaries.map((p) => p.parentName);
+            if (autoSummaries.length <= 4) {
+              return (
+                <div className="text-[10px] text-blue/80 mt-1.5 break-words leading-tight">
+                  {names.join(" · ")}
+                </div>
+              );
+            }
+            return (
+              <details className="mt-1.5 group">
+                <summary className="text-[10px] text-blue font-semibold cursor-pointer flex items-center gap-1 list-none hover:underline">
+                  <ChevronRight
+                    size={10}
+                    className="transition-transform group-open:rotate-90 shrink-0"
+                  />
+                  Listeyi gör ({autoSummaries.length})
+                </summary>
+                <div className="mt-1 space-y-0.5 max-h-32 overflow-y-auto pr-1 text-[10px] text-blue/80">
+                  {names.map((n) => (
+                    <div key={n} className="truncate">
+                      · {n}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            );
+          })()}
         />
         <StatBlock
           color="green"
@@ -563,7 +684,7 @@ export default function WbsPage() {
       {/* Eksik kalem listesi (açılır) */}
       {missingItems.length > 0 && (
         <details className="mb-4 rounded-xl bg-yellow/5 border border-yellow/30 group">
-          <summary className="px-4 py-3 cursor-pointer flex items-center gap-3 text-sm font-semibold text-text list-none [&::-webkit-details-marker]:hidden">
+          <summary className="px-4 py-3 cursor-pointer flex items-center gap-3 text-sm font-semibold text-text list-none">
             <AlertTriangle size={16} className="text-yellow shrink-0" />
             <span>
               <strong>{missingItems.length} kalem</strong> ağırlığı eksik — kardeşler arasında
@@ -657,6 +778,122 @@ export default function WbsPage() {
         </div>
       </Card>
 
+      {/* TOP 15 — En yüksek ağırlıklı iş kalemleri */}
+      {(() => {
+        const leafItems = sorted.filter((w) => w.isLeaf);
+        const byCode = new Map(sorted.map((w) => [w.code, w]));
+        const getAncestors = (code: string): { ana?: string; alt?: string } => {
+          const parts = code.split(".");
+          const anaCode = parts.slice(0, 2).join("."); // "1.4"
+          const altCode = parts.slice(0, 3).join("."); // "1.4.3"
+          return {
+            ana: byCode.get(anaCode)?.name,
+            alt: altCode !== code ? byCode.get(altCode)?.name : undefined,
+          };
+        };
+        const ranked = leafItems
+          .map((w) => ({
+            item: w,
+            finalPct: hierarchicalMap.get(w.code)?.finalPct ?? 0,
+            ancestors: getAncestors(w.code),
+          }))
+          .sort((a, b) => b.finalPct - a.finalPct)
+          .slice(0, 15);
+        const topShareSum = ranked.reduce((s, r) => s + r.finalPct, 0);
+        if (ranked.length === 0) return null;
+        return (
+          <Card className="!p-0 mt-5 overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2 bg-gradient-to-r from-accent/8 to-transparent">
+              <Sparkles size={16} className="text-accent" />
+              <h3 className="font-display font-bold text-base text-text">
+                En Yüksek Ağırlıklı 15 İş Kalemi
+              </h3>
+              <span className="text-[11px] text-text3 ml-auto font-mono">
+                Toplam payı: <span className="font-bold text-accent">%{(topShareSum * 100).toFixed(1)}</span>
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-bg2 text-text2">
+                  <tr className="text-[10px] uppercase tracking-wider font-bold">
+                    <th className="px-3 py-2 text-center w-10">#</th>
+                    <th className="px-3 py-2 text-left w-24">Kod</th>
+                    <th className="px-3 py-2 text-left">Ad</th>
+                    <th className="px-3 py-2 text-left">Disiplin</th>
+                    <th className="px-3 py-2 text-right">Miktar</th>
+                    <th className="px-3 py-2 text-right w-32">Ağırlık (Proje)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ranked.map((r, idx) => {
+                    const pct = r.finalPct * 100;
+                    return (
+                      <tr key={r.item.id} className="border-t border-border hover:bg-bg2/40">
+                        <td className="px-3 py-2 text-center">
+                          <span
+                            className={cn(
+                              "inline-flex items-center justify-center w-6 h-6 rounded font-bold text-[11px]",
+                              idx === 0
+                                ? "bg-accent text-white"
+                                : idx < 3
+                                ? "bg-accent/15 text-accent"
+                                : "bg-bg2 text-text2"
+                            )}
+                          >
+                            {idx + 1}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 font-mono text-text3">{r.item.code}</td>
+                        <td className="px-3 py-2">
+                          <div className="font-medium">{r.item.name}</div>
+                          {(r.ancestors.ana || r.ancestors.alt) && (
+                            <div className="text-[10px] text-text3 mt-0.5">
+                              ({[r.ancestors.ana, r.ancestors.alt].filter(Boolean).join(" › ")})
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
+                          {r.item.discipline ? (
+                            <Badge variant={DISCIPLINE_VARIANT[r.item.discipline]}>
+                              {DISCIPLINE_LABEL[r.item.discipline]}
+                            </Badge>
+                          ) : (
+                            <span className="text-text3">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums">
+                          {r.item.quantity > 0 ? (
+                            <>
+                              {formatNumber(r.item.quantity)}{" "}
+                              <span className="text-text3 text-[10px]">{r.item.unit}</span>
+                            </>
+                          ) : (
+                            <span className="text-text3">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <div className="flex items-center gap-2 justify-end">
+                            <div className="h-1.5 w-20 bg-bg2 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-accent"
+                                style={{ width: `${Math.min(100, pct * 4)}%` }}
+                              />
+                            </div>
+                            <span className="font-mono font-bold text-accent tabular-nums w-12 text-right">
+                              %{pct.toFixed(2)}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        );
+      })()}
+
       <WbsForm
         open={creating}
         onClose={() => setCreating(false)}
@@ -671,6 +908,7 @@ export default function WbsPage() {
         }}
       />
       <WbsForm
+        key={editing?.id ?? "edit-empty"}
         open={!!editing}
         onClose={() => setEditing(null)}
         initial={editing || undefined}
@@ -742,12 +980,14 @@ function StatBlock({
   sub,
   icon,
   color = "slate",
+  extra,
 }: {
   label: string;
   value: React.ReactNode;
   sub?: React.ReactNode;
   icon?: React.ReactNode;
   color?: string;
+  extra?: React.ReactNode;
 }) {
   const c = STAT_COLORS[color] || STAT_COLORS.slate;
   return (
@@ -762,6 +1002,7 @@ function StatBlock({
       </div>
       <div className="font-mono text-xl font-bold leading-none text-text tabular-nums">{value}</div>
       {sub && <div className="text-[11px] text-text2 mt-1.5 font-medium">{sub}</div>}
+      {extra}
     </div>
   );
 }
@@ -782,53 +1023,86 @@ function WbsForm({
 }) {
   const [code, setCode] = useState(initial?.code ?? "");
   const [name, setName] = useState(initial?.name ?? "");
-  const [level, setLevel] = useState<0 | 1 | 2 | 3>(initial?.level ?? 3);
-  const [isLeaf, setIsLeaf] = useState(initial?.isLeaf ?? true);
   const [quantity, setQuantity] = useState(initial?.quantity ?? 1);
   const [unit, setUnit] = useState(initial?.unit ?? "adet");
   const [weight, setWeight] = useState(initial?.weight ?? 0);
   const [discipline, setDiscipline] = useState<WbsItem["discipline"]>(initial?.discipline);
+  const [activityType, setActivityType] = useState<NonNullable<WbsItem["activityType"]>>(
+    initial?.activityType ?? "work"
+  );
+
+  // Seviye koddan türetilir: nokta sayısı (örn. "1.2.3" → 2 nokta → seviye 2)
+  const derivedLevel = useMemo<0 | 1 | 2 | 3>(() => {
+    const dots = (code.match(/\./g) ?? []).length;
+    return Math.min(3, Math.max(0, dots)) as 0 | 1 | 2 | 3;
+  }, [code]);
+  const levelLabel = LEVEL_LABEL[derivedLevel] ?? "—";
+  // L3 → yaprak (puantaj/ilerleme konusu); diğer seviyeler container
+  const derivedIsLeaf = derivedLevel === 3;
 
   return (
     <Dialog open={open} onClose={onClose} title={initial ? "WBS Düzenle" : "Yeni WBS"} size="md">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="Kod (örn. 1.4.10)">
-          <Input value={code} onChange={(e) => setCode(e.target.value)} />
-        </Field>
-        <Field label="Seviye">
-          <Select value={level} onChange={(e) => setLevel(Number(e.target.value) as 0 | 1 | 2 | 3)}>
-            <option value={0}>L0 — Proje Kökü</option>
-            <option value={1}>L1 — Ana Başlık</option>
-            <option value={2}>L2 — Alt Başlık</option>
-            <option value={3}>L3 — İş Kalemi (Yaprak)</option>
-          </Select>
+        <Field label="Kod (örn. 1.4.10)" className="sm:col-span-2">
+          <div>
+            <Input value={code} onChange={(e) => setCode(e.target.value)} />
+            <div className="text-[10px] text-text3 mt-1">
+              Otomatik: <span className="font-bold text-text">L{derivedLevel} — {levelLabel}</span>
+              {derivedIsLeaf ? (
+                <span className="ml-2 text-accent font-semibold">· Yaprak (puantaj/ilerleme konusu)</span>
+              ) : (
+                <span className="ml-2 text-text3">· Üst başlık (yaprak değil)</span>
+              )}
+            </div>
+          </div>
         </Field>
         <Field label="Ad" className="sm:col-span-2">
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Yaprak mı?">
-          <Select value={isLeaf ? "yes" : "no"} onChange={(e) => setIsLeaf(e.target.value === "yes")}>
-            <option value="yes">Evet (puantaj/plana konu)</option>
-            <option value="no">Hayır (Üst başlık)</option>
-          </Select>
-        </Field>
-        <Field label="Disiplin">
-          <Select value={discipline ?? ""} onChange={(e) => setDiscipline((e.target.value || undefined) as WbsItem["discipline"])}>
-            <option value="">—</option>
-            <option value="mekanik">Mekanik</option>
-            <option value="elektrik">Elektrik</option>
-            <option value="insaat">İnşaat</option>
-            <option value="muhendislik">Mühendislik</option>
-            <option value="idari">İdari</option>
-            <option value="diger">Diğer</option>
-          </Select>
-        </Field>
-        <Field label="Miktar">
-          <Input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value) || 0)} />
-        </Field>
-        <Field label="Birim">
-          <Input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="adet, m³, m..." />
-        </Field>
+        {derivedIsLeaf && (
+          <>
+            <Field
+              label="Aktivite Tipi"
+              hint="Work: ölçülebilir iş (miktar × birim, gün-gün). Milestone: sözleşme imzası gibi tek tarih olayı (miktar yok)."
+              className="sm:col-span-2"
+            >
+              <Select
+                value={activityType}
+                onChange={(e) =>
+                  setActivityType(e.target.value as NonNullable<WbsItem["activityType"]>)
+                }
+              >
+                <option value="work">Work (Ölçülebilir iş)</option>
+                <option value="milestone">Milestone (Kilometre taşı)</option>
+              </Select>
+            </Field>
+            <Field label="Disiplin">
+              <Select value={discipline ?? ""} onChange={(e) => setDiscipline((e.target.value || undefined) as WbsItem["discipline"])}>
+                <option value="">—</option>
+                <option value="mekanik">Mekanik</option>
+                <option value="elektrik">Elektrik</option>
+                <option value="insaat">İnşaat</option>
+                <option value="muhendislik">Mühendislik</option>
+                <option value="idari">İdari</option>
+                <option value="diger">Diğer</option>
+              </Select>
+            </Field>
+            {activityType === "work" ? (
+              <>
+                <Field label="Miktar">
+                  <Input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value) || 0)} />
+                </Field>
+                <Field label="Birim" className="sm:col-span-2">
+                  <Input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="adet, m³, m..." />
+                </Field>
+              </>
+            ) : (
+              <div className="sm:col-span-2 px-3 py-2 rounded-md bg-purple/8 border border-purple/25 text-[12px] text-text2">
+                <strong className="text-purple">Milestone</strong> — miktar ve birim alanları kapalı. Hedef tarihi Planlama sayfasından sihirbazla gir.
+              </div>
+            )}
+          </>
+        )}
         <Field
           label="Yerel Ağırlık (%)"
           hint="0 girilirse otomatik eşit dağıtım. Kardeşlerin toplamı 100 olması beklenir."
@@ -847,7 +1121,23 @@ function WbsForm({
         <Button variant="ghost" onClick={onClose}>İptal</Button>
         <Button
           variant="accent"
-          onClick={() => onSubmit({ code, name, level, isLeaf, quantity, unit, weight, discipline })}
+          onClick={() =>
+            onSubmit({
+              code,
+              name,
+              level: derivedLevel,
+              isLeaf: derivedIsLeaf,
+              // İş kalemi (yaprak) değilse miktar/birim/disiplin/aktiviteTipi anlamsız — temizle.
+              // Milestone'da da miktar/birim kullanılmaz, 0/"" set edilir.
+              quantity: derivedIsLeaf && activityType === "work" ? quantity : 0,
+              unit: derivedIsLeaf && activityType === "work" ? unit : "",
+              weight,
+              discipline: derivedIsLeaf ? discipline : undefined,
+              activityType: derivedIsLeaf ? activityType : undefined,
+              // estimatedDurationDays Planlama sayfasındaki "Süreleri Tanımla" adımında girilir
+              estimatedDurationDays: initial?.estimatedDurationDays,
+            })
+          }
         >
           Kaydet
         </Button>

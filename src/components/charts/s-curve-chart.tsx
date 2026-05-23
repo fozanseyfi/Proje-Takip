@@ -13,21 +13,64 @@ import {
 } from "recharts";
 import { formatDate } from "@/lib/utils";
 
+/**
+ * Dikey çizgiye paralel yazılı etiket render fonksiyonu.
+ * - "bottom": Etiket tablo tabanından başlar, yukarı doğru okunur.
+ * - "middle": Etiket dikey çizginin ortasına denk gelir, yukarı doğru okunur.
+ */
+export function makeVerticalLabel(
+  text: string,
+  color: string,
+  position: "bottom" | "middle"
+) {
+  return function VerticalLabel(props: {
+    viewBox?: { x?: number; y?: number; height?: number };
+  }) {
+    const vx = props.viewBox?.x ?? 0;
+    const vy = props.viewBox?.y ?? 0;
+    const vh = props.viewBox?.height ?? 0;
+    const labelX = vx + 5;
+    const labelY = position === "bottom" ? vy + vh - 4 : vy + vh / 2;
+    return (
+      <text
+        x={labelX}
+        y={labelY}
+        fill={color}
+        fontSize={10}
+        fontWeight={700}
+        textAnchor={position === "bottom" ? "start" : "middle"}
+        transform={`rotate(-90 ${labelX} ${labelY})`}
+      >
+        {text}
+      </text>
+    );
+  };
+}
+
 export interface SCurveDataPoint {
   date: string;
   planPct: number;
   realPct: number | null;
+  /** Opsiyonel — SPI-bazlı tahmin çizgisi (rapor tarihinden sonra 100'e ekstrapolasyon) */
+  forecast?: number;
 }
 
 export function SCurveChart({
   data,
   reportDate,
+  plannedEnd,
+  forecastEnd,
+  forecastOpacity = 1,
   height = 320,
 }: {
   data: SCurveDataPoint[];
   reportDate?: string;
+  plannedEnd?: string | null;
+  forecastEnd?: string | null;
+  forecastOpacity?: number;
   height?: number;
 }) {
+  const hasForecast = data.some((p) => typeof p.forecast === "number" && !isNaN(p.forecast));
   return (
     <div style={{ width: "100%", height }}>
       <ResponsiveContainer>
@@ -63,25 +106,45 @@ export function SCurveChart({
             labelFormatter={(d) => formatDate(d as string)}
             formatter={(v, name) => [
               typeof v === "number" && !isNaN(v) ? `${v.toFixed(1)}%` : "—",
-              name === "planPct" ? "Planlanan" : "Gerçekleşen",
+              name === "planPct"
+                ? "Planlanan"
+                : name === "realPct"
+                  ? "Gerçekleşen"
+                  : "Tahmin",
             ]}
           />
           <Legend
             wrapperStyle={{ fontSize: 12, color: "#475569", paddingTop: 12, fontWeight: 600 }}
-            formatter={(v) => (v === "planPct" ? "Planlanan %" : "Gerçekleşen %")}
+            formatter={(v) =>
+              v === "planPct"
+                ? "Planlanan %"
+                : v === "realPct"
+                  ? "Gerçekleşen %"
+                  : "Tahmin %"
+            }
           />
           {reportDate && (
             <ReferenceLine
               x={reportDate}
               stroke="#059669"
               strokeDasharray="4 3"
-              label={{
-                value: "Rapor",
-                fill: "#059669",
-                fontSize: 10,
-                position: "top",
-                fontWeight: 700,
-              }}
+              label={makeVerticalLabel("Rapor günü", "#059669", "middle")}
+            />
+          )}
+          {plannedEnd && (
+            <ReferenceLine
+              x={plannedEnd}
+              stroke="#3b82f6"
+              strokeDasharray="2 2"
+              label={makeVerticalLabel("Planlanan Bitiş", "#3b82f6", "bottom")}
+            />
+          )}
+          {forecastEnd && forecastEnd !== plannedEnd && (
+            <ReferenceLine
+              x={forecastEnd}
+              stroke="#f97316"
+              strokeDasharray="2 2"
+              label={makeVerticalLabel("Tahmini Bitiş", "#f97316", "bottom")}
             />
           )}
           <Line
@@ -100,6 +163,19 @@ export function SCurveChart({
             dot={false}
             connectNulls={false}
           />
+          {hasForecast && (
+            <Line
+              type="monotone"
+              dataKey="forecast"
+              stroke="#f97316"
+              strokeWidth={2}
+              strokeDasharray="5 4"
+              strokeOpacity={forecastOpacity}
+              dot={false}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>

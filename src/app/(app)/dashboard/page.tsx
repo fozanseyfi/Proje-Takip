@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   TrendingUp,
@@ -34,6 +34,12 @@ import {
   useProjectRealized,
 } from "@/lib/store";
 import { computeProgress, buildSCurve, getAllDates } from "@/lib/calc/progress";
+import { computeForecast, buildForecastCurve, getConfidenceTier } from "@/lib/calc/forecast";
+import {
+  ProcurementKpiStrip,
+  computeProcurementKpis,
+} from "@/components/dashboard/procurement-kpis";
+import { getPlanRange } from "@/lib/calc/predecessors";
 import {
   computeSectionProgress,
   buildSectionSCurve,
@@ -52,8 +58,17 @@ import { MiniSCurve } from "@/components/charts/section-scurve";
 import { HeadcountBar } from "@/components/charts/headcount-bar";
 import { TrendLine } from "@/components/charts/trend-line";
 import { BillingDetailWidget } from "@/components/dashboard/billing-detail";
+import { PaymentPlanWidget } from "@/components/dashboard/payment-plan-widget";
 import { ManhourDetailWidget } from "@/components/dashboard/manhour-detail";
+import {
+  PersonnelHeadcountWidget,
+  MachineHeadcountWidget,
+} from "@/components/dashboard/headcount-widget";
 import { CollapsibleCard } from "@/components/ui/collapsible-card";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/toast";
+import { downloadManagementReportPDF } from "@/lib/pdf/management-report";
+import { usePanelName } from "@/lib/store";
 import {
   formatDate,
   daysBetween,
@@ -77,6 +92,11 @@ export default function DashboardPage() {
   const billing = useStore((s) => s.billing);
   const lookahead = useStore((s) => s.lookahead);
   const dailyReports = useStore((s) => s.dailyReports);
+  const machinesMaster = useStore((s) => s.machinesMaster).filter((m) => !m.deletedAt);
+  const panelName = usePanelName();
+  const currentUser = useStore((s) => s.users.find((u) => u.id === s.currentUserId) ?? null);
+  const toast = useToast((s) => s.push);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   if (!project) {
     return (
@@ -99,16 +119,58 @@ export default function DashboardPage() {
       quantity: w.quantity,
       weight: w.weight,
     }));
+    const leafItems = items.filter((i) => i.isLeaf);
     const { planPct, realPct, spi } = computeProgress(items, planned, realized, project.reportDate);
-    const sCurve = buildSCurve(items, planned, realized, project.reportDate);
+    const baseCurve = buildSCurve(items, planned, realized, project.reportDate);
+
+    // EVM tahmin — SPI bazlı, raporlama tarihinden 100'e ekstrapolasyon
+    const forecast = computeForecast(
+      leafItems,
+      planned,
+      realized,
+      project.reportDate,
+      project.startDate,
+      project.plannedEnd
+    );
+    // S-curve'e forecast değerlerini ekle
+    const fc = buildForecastCurve(
+      leafItems,
+      planned,
+      realized,
+      project.reportDate,
+      project.startDate,
+      project.plannedEnd
+    );
+    // baseCurve ile forecast curve'ünü date'e göre birleştir
+    const fcByDate = new Map(fc.points.map((p) => [p.date, p]));
+    const sCurve = baseCurve.map((p) => {
+      const fpoint = fcByDate.get(p.date);
+      return { ...p, forecast: fpoint?.forecast ?? NaN, realPct: isNaN(p.realPct) ? null : p.realPct };
+    });
+    // Forecast eğrisi baseCurve sonrasına uzanıyorsa eklemeleri de al
+    const baseLastDate = baseCurve.length > 0 ? baseCurve[baseCurve.length - 1].date : null;
+    if (baseLastDate) {
+      for (const fp of fc.points) {
+        if (fp.date > baseLastDate) {
+          sCurve.push({
+            date: fp.date,
+            planPct: fp.pv,
+            realPct: null,
+            forecast: fp.forecast,
+          });
+        }
+      }
+    }
+
     const sections = computeSectionProgress(wbs, planned, realized, project.reportDate, 1);
     const allDates = getAllDates(planned, realized);
-    return { planPct, realPct, spi, sCurve, sections, allDates };
-  }, [wbs, planned, realized, project.reportDate]);
+    return { planPct, realPct, spi, sCurve, sections, allDates, forecast };
+  }, [wbs, planned, realized, project.reportDate, project.startDate, project.plannedEnd]);
 
   const elapsed = Math.max(0, daysBetween(project.startDate, project.reportDate) + 1);
   const remaining = Math.max(0, project.durationDays - elapsed);
   const spiL = spiLevel(stats.spi);
+  const confMain = getConfidenceTier(stats.forecast.ev);
 
   const today = project.reportDate;
   const projectId = project.id;
@@ -243,21 +305,46 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <Button
+              variant="outline"
+              disabled={pdfBusy}
+              onClick={async () => {
+                setPdfBusy(true);
+                try {
+                  await downloadManagementReportPDF({
+                    project,
+                    wbs,
+                    planned,
+                    realized,
+                    billing,
+                    procurement,
+                    lookahead,
+                    personnelAttendance,
+                    machineAttendance,
+                    dailyReports,
+                    personnel,
+                    machines: machinesMaster,
+                    panelName,
+                    preparedBy: currentUser?.fullName,
+                  });
+                  toast("Yönetim özeti PDF indirildi.", "success");
+                } catch (err) {
+                  console.error(err);
+                  toast("PDF oluşturulamadı.", "error");
+                } finally {
+                  setPdfBusy(false);
+                }
+              }}
+            >
+              <FileText size={14} /> {pdfBusy ? "Hazırlanıyor…" : "Yönetim Özeti PDF"}
+            </Button>
             <SpiBlock spi={stats.spi} level={spiL} />
-            <div className="px-5 py-3 rounded-xl border border-border bg-white shadow-soft text-center">
-              <div className="text-[10px] uppercase tracking-wider font-bold text-text3">Geçen · Kalan</div>
-              <div className="font-mono text-2xl font-bold leading-tight mt-0.5 text-text tabular-nums">
-                {elapsed}
-                <span className="text-text3 mx-1">·</span>
-                <span className="text-text2">{remaining}</span>
-              </div>
-            </div>
           </div>
         </div>
       </div>
 
       {/* KPI STRIP */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3 sm:gap-4 mb-6">
         <KpiBig
           icon={<Target size={16} />}
           iconBg="blue"
@@ -323,6 +410,113 @@ export default function DashboardPage() {
           }
           delay={4}
         />
+        <KpiBig
+          icon={<Calendar size={16} />}
+          iconBg="red"
+          label="Süre · Geçen / Kalan"
+          value={`${((elapsed / project.durationDays) * 100).toFixed(0)}%`}
+          valueColor="text-text"
+          valueRight={
+            <div className="text-right">
+              <div className="text-[10px] text-text3 font-bold">GEÇEN · KALAN</div>
+              <div className="font-mono text-base font-bold text-text tabular-nums">
+                <span className="text-accent">{elapsed}</span>
+                <span className="text-text3 mx-1">·</span>
+                <span className="text-text2">{remaining}</span>
+                <span className="text-xs text-text3 ml-1">g</span>
+              </div>
+              <div className="text-[10px] text-text3 font-mono">/ {project.durationDays}g</div>
+            </div>
+          }
+          bar={(elapsed / project.durationDays) * 100}
+          barColor="var(--red)"
+          sub={
+            <span className="flex items-center justify-between gap-2 text-[10px] text-text3 font-mono">
+              <span>Söz: <span className="text-text font-bold">{formatDate(project.contractEnd)}</span></span>
+              <span>Plan: <span className="text-text font-bold">{formatDate(project.plannedEnd)}</span></span>
+            </span>
+          }
+          delay={5}
+        />
+        {(() => {
+          const hide = confMain.hideValues || stats.forecast.forecastEnd == null;
+          const tierLabel =
+            confMain.tier === "very-low" || confMain.tier === "low" ? `⚠ ${confMain.label}` : confMain.label;
+          return (
+            <>
+              <KpiBig
+                icon={<Target size={16} />}
+                iconBg="amber"
+                label="Tahmini Bitiş (SPI)"
+                value={hide ? "—" : formatDate(stats.forecast.forecastEnd!)}
+                valueColor={
+                  hide
+                    ? "text-text3"
+                    : stats.forecast.deltaDays <= 0
+                      ? "text-green"
+                      : stats.forecast.deltaDays <= 7
+                        ? "text-yellow"
+                        : "text-red"
+                }
+                sub={
+                  hide ? (
+                    <span className="text-[10px] text-text3">
+                      {tierLabel} (EV %{(stats.forecast.ev * 100).toFixed(1)})
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[10px] text-text3 font-mono">
+                      Plan: <span className="text-text font-bold">{formatDate(project.plannedEnd)}</span>
+                      {stats.forecast.spi != null && (
+                        <>
+                          <span className="text-text3 mx-1">·</span>
+                          SPI <span className="text-text font-bold">{stats.forecast.spi.toFixed(2)}</span>
+                        </>
+                      )}
+                    </span>
+                  )
+                }
+                delay={6}
+              />
+              <KpiBig
+                icon={<TrendingDown size={16} />}
+                iconBg={
+                  hide
+                    ? "blue"
+                    : stats.forecast.deltaDays <= 0
+                      ? "green"
+                      : stats.forecast.deltaDays <= 7
+                        ? "amber"
+                        : "red"
+                }
+                label="Sapma (gün)"
+                value={
+                  hide
+                    ? "—"
+                    : `${stats.forecast.deltaDays >= 0 ? "+" : ""}${stats.forecast.deltaDays} g`
+                }
+                valueColor={
+                  hide
+                    ? "text-text3"
+                    : stats.forecast.deltaDays <= 0
+                      ? "text-green"
+                      : stats.forecast.deltaDays <= 7
+                        ? "text-yellow"
+                        : "text-red"
+                }
+                sub={
+                  <span className="text-[10px] text-text3">
+                    {hide
+                      ? tierLabel
+                      : stats.forecast.deltaDays <= 0
+                        ? "Zamanında / erken"
+                        : "Plana göre geç bitecek"}
+                  </span>
+                }
+                delay={7}
+              />
+            </>
+          );
+        })()}
       </div>
 
       {criticalOpen > 0 && (
@@ -339,19 +533,23 @@ export default function DashboardPage() {
         <div className="flex items-center justify-between mb-2">
           <CardTitle>
             <Activity size={14} className="text-accent" />
-            Genel S-Eğrisi · Plan vs Gerçekleşme
+            Genel S-Curve · Plan vs Gerçekleşme
           </CardTitle>
-          <div className="flex items-center gap-4 text-[11px] text-text2 font-medium">
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-0.5 bg-planned rounded-full" /> Planlanan
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-0.5 bg-realized rounded-full" /> Gerçekleşen
-            </span>
-          </div>
+          <Link
+            href="/plan-status"
+            className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent hover:underline"
+          >
+            Detay <ArrowRight size={12} />
+          </Link>
         </div>
         {stats.sCurve.length > 0 ? (
-          <SCurveChart data={stats.sCurve} reportDate={project.reportDate} />
+          <SCurveChart
+            data={confMain.showForecast ? stats.sCurve : stats.sCurve.map((p) => ({ ...p, forecast: NaN }))}
+            reportDate={project.reportDate}
+            plannedEnd={project.plannedEnd}
+            forecastEnd={confMain.showForecast ? stats.forecast.forecastEnd : null}
+            forecastOpacity={confMain.forecastOpacity}
+          />
         ) : (
           <EmptyChart label="Henüz planlama / gerçekleşme verisi yok" href="/planning" linkLabel="Planlamaya geç" />
         )}
@@ -359,100 +557,237 @@ export default function DashboardPage() {
 
       {/* SECTION S-CURVES */}
       {stats.sections.length > 0 && (
-        <Card className="mb-6 animate-slide-up">
-          <CardTitle>
-            <Activity size={14} className="text-accent" />
-            Bölüm S-Eğrileri · L1
-          </CardTitle>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {stats.sections.map((sec) => {
-              const sCurve = buildSectionSCurve(
-                wbs,
-                planned,
-                realized,
-                sec.code,
-                project.reportDate,
-                stats.allDates
-              );
-              const spiL = spiLevel(sec.spi);
-              return (
-                <div key={sec.code} className="rounded-xl border border-border p-3 bg-bg2/40">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="text-xs font-bold text-text truncate">
-                      <span className="font-mono text-text3 mr-1.5">{sec.code}</span>
-                      {sec.name}
+        <div className="mb-6 animate-slide-up">
+          <CollapsibleCard
+            title="Bölüm S-Curve · L1"
+            icon={<Activity size={18} />}
+            tone="blue"
+            defaultOpen={false}
+            badge={<Badge variant="gray">{stats.sections.length}</Badge>}
+          >
+            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {stats.sections.map((sec) => {
+                const sCurve = buildSectionSCurve(
+                  wbs,
+                  planned,
+                  realized,
+                  sec.code,
+                  project.reportDate,
+                  stats.allDates
+                );
+                const spiL = spiLevel(sec.spi);
+
+                // Section'a özgü tahmin: section'ın kendi leaf'leri + kendi tarih aralığı
+                const sectionLeaves = wbs.filter(
+                  (w) => w.isLeaf && !w.deletedAt && w.code.startsWith(sec.code + ".")
+                );
+                const leafItems = sectionLeaves.map((l) => ({
+                  code: l.code,
+                  isLeaf: true,
+                  quantity: l.quantity,
+                  weight: l.weight,
+                }));
+                // Section'ın planlanan başlangıç + bitiş tarihleri (leaf'lerden agregat)
+                let secStart: string | undefined;
+                let secEnd: string | undefined;
+                for (const l of sectionLeaves) {
+                  const r = getPlanRange(planned[l.code]);
+                  if (r.start && (!secStart || r.start < secStart)) secStart = r.start;
+                  if (r.end && (!secEnd || r.end > secEnd)) secEnd = r.end;
+                }
+                const secFc = secStart && secEnd
+                  ? computeForecast(
+                      leafItems,
+                      planned,
+                      realized,
+                      project.reportDate,
+                      secStart,
+                      secEnd
+                    )
+                  : null;
+                const secFcCurve = secStart && secEnd
+                  ? buildForecastCurve(
+                      leafItems,
+                      planned,
+                      realized,
+                      project.reportDate,
+                      secStart,
+                      secEnd
+                    )
+                  : null;
+                // sCurve'e forecast değerlerini ekle (tarihe göre eşle)
+                const fcByDate = new Map(
+                  secFcCurve ? secFcCurve.points.map((p) => [p.date, p.forecast]) : []
+                );
+                const enrichedCurve = sCurve.map((p) => ({
+                  ...p,
+                  forecast: fcByDate.get(p.date) ?? NaN,
+                }));
+                // Forecast curve sCurve dışına uzanıyorsa devamını ekle
+                if (secFcCurve && sCurve.length > 0) {
+                  const lastDate = sCurve[sCurve.length - 1].date;
+                  for (const fp of secFcCurve.points) {
+                    if (fp.date > lastDate) {
+                      enrichedCurve.push({
+                        date: fp.date,
+                        planPct: fp.pv,
+                        realPct: NaN,
+                        forecast: fp.forecast,
+                      });
+                    }
+                  }
+                }
+
+                const delta = secFc?.deltaDays ?? 0;
+                const hasForecast = secFc?.forecastEnd != null;
+                const secConf = getConfidenceTier(sec.realPct);
+                // EV %5 altıysa veya forecast yoksa kademe yok kabul et
+                const showFc = secConf.showForecast && hasForecast;
+
+                // Enriched curve'de forecast değerlerini gizle (tier == none ise)
+                const renderCurve = secConf.showForecast
+                  ? enrichedCurve
+                  : enrichedCurve.map((p) => ({ ...p, forecast: NaN }));
+
+                return (
+                  <div key={sec.code} className="rounded-xl border border-border p-4 bg-bg2/40">
+                    <div className="flex items-center justify-between mb-2 gap-2">
+                      <div className="text-sm font-bold text-text truncate">
+                        <span className="font-mono text-text3 mr-1.5 text-xs">{sec.code}</span>
+                        {sec.name}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {sec.spi != null && (
+                          <Badge variant={spiL === "good" ? "green" : spiL === "warn" ? "yellow" : "red"}>
+                            SPI {sec.spi.toFixed(2)}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
-                    {sec.spi != null && (
-                      <Badge variant={spiL === "good" ? "green" : spiL === "warn" ? "yellow" : "red"}>
-                        {sec.spi.toFixed(2)}
-                      </Badge>
+                    <div className="flex items-baseline gap-3 mb-2 text-xs">
+                      <span className="text-planned font-mono font-semibold">
+                        Plan {(sec.planPct * 100).toFixed(0)}%
+                      </span>
+                      <span className="text-realized font-mono font-semibold">
+                        Gerçek {(sec.realPct * 100).toFixed(0)}%
+                      </span>
+                      <span className="text-text3 ml-auto">{sec.leafCount} kalem</span>
+                    </div>
+                    {sCurve.length > 0 ? (
+                      <MiniSCurve
+                        data={renderCurve}
+                        reportDate={project.reportDate}
+                        plannedEnd={secEnd ?? null}
+                        forecastEnd={showFc ? secFc?.forecastEnd ?? null : null}
+                        forecastOpacity={secConf.forecastOpacity}
+                        height={160}
+                      />
+                    ) : (
+                      <div className="h-[160px] flex items-center justify-center text-text3 text-[10px]">
+                        veri yok
+                      </div>
                     )}
-                  </div>
-                  <div className="flex items-baseline gap-3 mb-1 text-[11px]">
-                    <span className="text-planned font-mono font-semibold">
-                      P {(sec.planPct * 100).toFixed(0)}%
-                    </span>
-                    <span className="text-realized font-mono font-semibold">
-                      G {(sec.realPct * 100).toFixed(0)}%
-                    </span>
-                    <span className="text-text3 ml-auto">{sec.leafCount} kalem</span>
-                  </div>
-                  {sCurve.length > 0 ? (
-                    <MiniSCurve data={sCurve} reportDate={project.reportDate} />
-                  ) : (
-                    <div className="h-[110px] flex items-center justify-center text-text3 text-[10px]">
-                      veri yok
+                    {/* Plana göre erken/geç bitiş notu + güvenilirlik */}
+                    <div className="mt-2 text-[11px] font-semibold flex items-center gap-2 flex-wrap">
+                      {!showFc ? (
+                        <span className="text-text3">
+                          Tahmin için yeterli veri yok (EV %{(sec.realPct * 100).toFixed(1)})
+                        </span>
+                      ) : (
+                        <>
+                          {delta === 0 && (
+                            <span className="text-green">✓ Plana göre zamanında bitecek</span>
+                          )}
+                          {delta < 0 && (
+                            <span className="text-blue">
+                              ◂ Plana göre <strong>{Math.abs(delta)} gün erken</strong> bitecek
+                            </span>
+                          )}
+                          {delta > 0 && delta <= 7 && (
+                            <span className="text-yellow">
+                              ⚠ Plana göre <strong>+{delta} gün geç</strong> bitecek
+                            </span>
+                          )}
+                          {delta > 7 && (
+                            <span className="text-red">
+                              ⚠ Plana göre <strong>+{delta} gün geç</strong> bitecek
+                            </span>
+                          )}
+                          {/* Güvenilirlik etiketi */}
+                          {(secConf.tier === "very-low" || secConf.tier === "low") && (
+                            <span
+                              className={cn(
+                                "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ml-auto",
+                                secConf.badgeColor === "red" && "bg-red/15 text-red",
+                                secConf.badgeColor === "yellow" && "bg-yellow/20 text-yellow"
+                              )}
+                              title={secConf.description}
+                            >
+                              ⚠ {secConf.label}
+                            </span>
+                          )}
+                        </>
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </Card>
+                  </div>
+                );
+              })}
+            </div>
+          </CollapsibleCard>
+        </div>
       )}
 
       {/* HEADCOUNT + TRENDS + İMALAT ÖZETİ (4-col) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4 mb-6 animate-slide-up">
-        <Card>
-          <CardTitle>
-            <Users size={14} className="text-accent" />
-            Personel Headcount · Son 7 Gün
-          </CardTitle>
-          {last7Days.some((d) => d.count > 0) ? (
-            <HeadcountBar data={last7Days} />
-          ) : (
-            <EmptyChart label="Son 7 gün puantaj kaydı yok" href="/personnel" linkLabel="Puantaja git" small />
-          )}
-        </Card>
-        <Card>
-          <CardTitle>
-            <TrendingUp size={14} className="text-accent" />
-            Personel Günlük Trend · 30 Gün
-          </CardTitle>
-          {last30Personnel.some((d) => d.count > 0) ? (
-            <TrendLine data={last30Personnel} color="#10b981" fillId="trendGreen" label="Personel" />
-          ) : (
-            <EmptyChart label="Trend için yeterli veri yok" href="/personnel" linkLabel="Puantaja git" small />
-          )}
-        </Card>
-        <Card>
-          <CardTitle>
-            <Truck size={14} className="text-accent3" />
-            Makine Günlük Trend · 30 Gün
-          </CardTitle>
-          {last30Machines.some((d) => d.count > 0) ? (
-            <TrendLine data={last30Machines} color="#f59e0b" fillId="trendAmber" label="Makine" />
-          ) : (
-            <EmptyChart label="Trend için yeterli veri yok" href="/machines" linkLabel="Puantaja git" small />
-          )}
-        </Card>
-        <Card className="!p-0 overflow-hidden">
-          <div className="px-5 py-3 border-b border-border">
-            <CardTitle className="mb-0">
-              <ListChecks size={14} className="text-accent" />
-              İmalat Bölüm Özeti
-            </CardTitle>
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4 mb-6 animate-slide-up items-start">
+        <CollapsibleCard
+          title="Personel Headcount · Son 7 Gün"
+          icon={<Users size={18} />}
+          tone="purple"
+          defaultOpen={false}
+        >
+          <div className="p-3">
+            {last7Days.some((d) => d.count > 0) ? (
+              <HeadcountBar data={last7Days} />
+            ) : (
+              <EmptyChart label="Son 7 gün puantaj kaydı yok" href="/personnel" linkLabel="Puantaja git" small />
+            )}
           </div>
+        </CollapsibleCard>
+        <CollapsibleCard
+          title="Personel Günlük Trend · 30 Gün"
+          icon={<TrendingUp size={18} />}
+          tone="green"
+          defaultOpen={false}
+        >
+          <div className="p-3">
+            {last30Personnel.some((d) => d.count > 0) ? (
+              <TrendLine data={last30Personnel} color="#10b981" fillId="trendGreen" label="Personel" />
+            ) : (
+              <EmptyChart label="Trend için yeterli veri yok" href="/personnel" linkLabel="Puantaja git" small />
+            )}
+          </div>
+        </CollapsibleCard>
+        <CollapsibleCard
+          title="Makine Günlük Trend · 30 Gün"
+          icon={<Truck size={18} />}
+          tone="yellow"
+          defaultOpen={false}
+        >
+          <div className="p-3">
+            {last30Machines.some((d) => d.count > 0) ? (
+              <TrendLine data={last30Machines} color="#f59e0b" fillId="trendAmber" label="Makine" />
+            ) : (
+              <EmptyChart label="Trend için yeterli veri yok" href="/machines" linkLabel="Puantaja git" small />
+            )}
+          </div>
+        </CollapsibleCard>
+        <CollapsibleCard
+          title="İmalat Bölüm Özeti"
+          icon={<ListChecks size={18} />}
+          tone="accent"
+          defaultOpen={false}
+          badge={<Badge variant="gray">{stats.sections.length}</Badge>}
+        >
           <div className="max-h-[260px] overflow-y-auto">
             {stats.sections.map((sec) => {
               const spiL = spiLevel(sec.spi);
@@ -463,7 +798,6 @@ export default function DashboardPage() {
                   key={sec.code}
                   className="px-3 py-2 border-b border-border last:border-b-0 hover:bg-bg2/40 transition-colors"
                 >
-                  {/* Üst satır: kod + ad + SPI */}
                   <div className="flex items-center gap-1.5 mb-1.5">
                     <span className="font-mono text-[10px] text-text3 shrink-0">{sec.code}</span>
                     <span className="text-[11px] font-semibold text-text truncate flex-1">{sec.name}</span>
@@ -478,7 +812,6 @@ export default function DashboardPage() {
                       </span>
                     )}
                   </div>
-                  {/* Bar */}
                   <div className="relative h-1.5 bg-bg3 rounded-full overflow-hidden mb-0.5">
                     <div
                       className="absolute h-full bg-planned/40 rounded-full"
@@ -489,7 +822,6 @@ export default function DashboardPage() {
                       style={{ width: `${realP}%` }}
                     />
                   </div>
-                  {/* Alt etiketler */}
                   <div className="flex justify-between text-[9px] font-mono tabular-nums">
                     <span className="text-planned">P {planP.toFixed(0)}%</span>
                     <span className="text-realized">G {realP.toFixed(0)}%</span>
@@ -501,12 +833,12 @@ export default function DashboardPage() {
               <div className="text-center text-text3 text-sm py-6">Bölüm verisi yok.</div>
             )}
           </div>
-        </Card>
+        </CollapsibleCard>
       </div>
 
-      {/* ADAM-SAAT */}
+      {/* HAKEDİŞ PLANI — gecikme varsa üst sırada */}
       <div className="mb-6 animate-slide-up">
-        <ManhourDetailWidget />
+        <PaymentPlanWidget />
       </div>
 
       {/* FATURALANDIRMA */}
@@ -514,14 +846,29 @@ export default function DashboardPage() {
         <BillingDetailWidget />
       </div>
 
-      {/* PROCUREMENT + KRİTİK İŞLER + CLAIM&TUTANAK */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6 animate-slide-up">
+      {/* PROCUREMENT — tam genişlik */}
+      <div className="mb-4 animate-slide-up">
         <CollapsibleCard
           title="Procurement Follow Up"
-          icon={<ShoppingCart size={14} className="text-accent" />}
+          icon={<ShoppingCart size={18} />}
+          tone="blue"
+          defaultOpen={false}
           link={{ href: "/procurement", label: "Detay →" }}
           badge={<Badge variant="gray">{procFollow.length}</Badge>}
         >
+          {/* KPI Strip — Gecikme (Teslim) · Gecikme (PO) · Teslim Edilen · Toplam Bedel */}
+          <div className="px-3 pt-3">
+            {(() => {
+              const projItems = procurement.filter((p) => p.projectId === projectId);
+              return (
+                <ProcurementKpiStrip
+                  kpis={computeProcurementKpis(projItems)}
+                  items={projItems}
+                  compact
+                />
+              );
+            })()}
+          </div>
           {procFollow.length === 0 ? (
             <p className="text-xs text-text3 py-6 text-center">Yaklaşan veya kritik malzeme yok.</p>
           ) : (
@@ -590,10 +937,15 @@ export default function DashboardPage() {
             </div>
           )}
         </CollapsibleCard>
+      </div>
 
+      {/* KRİTİK İŞLER + CLAIM&TUTANAK */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 animate-slide-up">
         <CollapsibleCard
           title="Kritik İşler"
-          icon={<Telescope size={14} className="text-red" />}
+          icon={<Telescope size={18} />}
+          tone="red"
+          defaultOpen={false}
           link={{ href: "/lookahead", label: "Detay →" }}
           badge={<Badge variant="red">{kritikIs.length}</Badge>}
         >
@@ -635,7 +987,9 @@ export default function DashboardPage() {
 
         <CollapsibleCard
           title="Claim & Tutanak Konuları"
-          icon={<FileText size={14} className="text-purple" />}
+          icon={<FileText size={18} />}
+          tone="purple"
+          defaultOpen={false}
           link={{ href: "/lookahead", label: "Detay →" }}
           badge={<Badge variant="purple">{claimTutanak.length}</Badge>}
         >
@@ -673,11 +1027,24 @@ export default function DashboardPage() {
         </CollapsibleCard>
       </div>
 
+      {/* ADAM-SAAT */}
+      <div className="mb-6 animate-slide-up">
+        <ManhourDetailWidget />
+      </div>
+
+      {/* HEADCOUNT WIDGETS — tam genişlik, stacked */}
+      <div className="space-y-4 mb-6 animate-slide-up">
+        <PersonnelHeadcountWidget />
+        <MachineHeadcountWidget />
+      </div>
+
       {/* SON 5 GÜN FAALİYET ÖZETİ */}
       <div className="mb-6 animate-slide-up">
         <CollapsibleCard
           title="Son 5 Günün Faaliyet Özeti"
-          icon={<FileText size={14} className="text-accent" />}
+          icon={<FileText size={18} />}
+          tone="accent"
+          defaultOpen={false}
           link={{ href: "/realization", label: "Tümü →" }}
           badge={<Badge variant="gray">{recentRealizations.length}</Badge>}
         >
@@ -714,7 +1081,9 @@ export default function DashboardPage() {
                 )}
               </>
             }
-            icon={<Camera size={14} className="text-accent" />}
+            icon={<Camera size={18} />}
+            tone="blue"
+            defaultOpen={false}
             link={{ href: "/daily-report", label: "Günlük rapor →" }}
           >
             {dronePhoto ? (
@@ -745,7 +1114,9 @@ export default function DashboardPage() {
 
         <CollapsibleCard
           title="Proje Künyesi"
-          icon={<Building2 size={14} className="text-accent" />}
+          icon={<Building2 size={18} />}
+          tone="gray"
+          defaultOpen={false}
         >
           <div className="p-5">
             <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
@@ -762,7 +1133,7 @@ export default function DashboardPage() {
                 label="Bütçe"
                 value={project.totalBudget ? formatMoney(project.totalBudget, project.budgetCurrency, 0) : "—"}
               />
-              <InfoItem label="Durum" value={<span className="capitalize">{project.status}</span>} />
+              <InfoItem label="Durum" value={STATUS_LABEL_DASH[project.status] ?? project.status} />
             </dl>
           </div>
         </CollapsibleCard>
@@ -827,7 +1198,7 @@ function KpiBig({
   bar?: number;
   barColor?: string;
   sub?: React.ReactNode;
-  delay?: 1 | 2 | 3 | 4;
+  delay?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
 }) {
   const delayCls =
     delay === 1
@@ -882,6 +1253,13 @@ function InfoItem({ label, value }: { label: string; value: React.ReactNode }) {
     </div>
   );
 }
+
+const STATUS_LABEL_DASH: Record<string, string> = {
+  draft: "Taslak",
+  active: "Aktif",
+  completed: "Tamamlandı",
+  archived: "Arşivlendi",
+};
 
 const KIND_STYLES: Record<string, { label: string; bg: string; text: string }> = {
   kritik_is: { label: "Kritik İş", bg: "bg-red/10", text: "text-red" },

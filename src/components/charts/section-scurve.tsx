@@ -15,17 +15,26 @@ export interface MiniSCurvePoint {
   date: string;
   planPct: number;
   realPct: number;
+  /** Opsiyonel — SPI-bazlı tahmin (rapor tarihinden 100'e ekstrapolasyon) */
+  forecast?: number;
 }
 
 export function MiniSCurve({
   data,
   reportDate,
-  height = 110,
+  plannedEnd,
+  forecastEnd,
+  forecastOpacity = 1,
+  height = 140,
 }: {
   data: MiniSCurvePoint[];
   reportDate?: string;
+  plannedEnd?: string | null;
+  forecastEnd?: string | null;
+  forecastOpacity?: number;
   height?: number;
 }) {
+  const hasForecast = data.some((p) => typeof p.forecast === "number" && !isNaN(p.forecast));
   return (
     <div style={{ width: "100%", height }}>
       <ResponsiveContainer>
@@ -44,14 +53,33 @@ export function MiniSCurve({
             labelFormatter={(d) => formatDate(d as string)}
             formatter={(v, name) => [
               typeof v === "number" && !isNaN(v) ? `${v.toFixed(1)}%` : "—",
-              name === "planPct" ? "Plan" : "Gerçek",
+              name === "planPct" ? "Plan" : name === "realPct" ? "Gerçek" : "Tahmin",
             ]}
           />
           {reportDate && (
             <ReferenceLine x={reportDate} stroke="#059669" strokeDasharray="2 2" strokeWidth={1} />
           )}
+          {plannedEnd && (
+            <ReferenceLine x={plannedEnd} stroke="#3b82f6" strokeDasharray="2 2" strokeWidth={1} />
+          )}
+          {forecastEnd && forecastEnd !== plannedEnd && (
+            <ReferenceLine x={forecastEnd} stroke="#f97316" strokeDasharray="2 2" strokeWidth={1} />
+          )}
           <Line type="monotone" dataKey="planPct" stroke="#3b82f6" strokeWidth={2} dot={false} connectNulls />
           <Line type="monotone" dataKey="realPct" stroke="#10b981" strokeWidth={2} dot={false} connectNulls={false} />
+          {hasForecast && (
+            <Line
+              type="monotone"
+              dataKey="forecast"
+              stroke="#f97316"
+              strokeWidth={1.8}
+              strokeDasharray="4 3"
+              strokeOpacity={forecastOpacity}
+              dot={false}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>

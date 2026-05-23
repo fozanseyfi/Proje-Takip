@@ -8,7 +8,7 @@ import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { SCurveChart } from "@/components/charts/s-curve-chart";
 import { computeProgress, buildSCurve } from "@/lib/calc/progress";
-import { formatDate, formatPct, spiLevel, daysBetween, cn } from "@/lib/utils";
+import { formatDate, formatPct, spiLevel, daysBetween, cn, toISODate } from "@/lib/utils";
 
 export default function PublicViewer({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
@@ -19,6 +19,7 @@ export default function PublicViewer({ params }: { params: Promise<{ token: stri
 
   const project = useMemo(() => projects.find((p) => p.publicShareToken === token), [projects, token]);
 
+  const today = toISODate(new Date());
   const stats = useMemo(() => {
     if (!project) return null;
     const items = wbsAll
@@ -26,10 +27,10 @@ export default function PublicViewer({ params }: { params: Promise<{ token: stri
       .map((w) => ({ code: w.code, isLeaf: w.isLeaf, quantity: w.quantity, weight: w.weight }));
     const planned = plannedAll[project.id] || {};
     const realized = realizedAll[project.id] || {};
-    const { planPct, realPct, spi } = computeProgress(items, planned, realized, project.reportDate);
-    const sCurve = buildSCurve(items, planned, realized, project.reportDate);
+    const { planPct, realPct, spi } = computeProgress(items, planned, realized, today);
+    const sCurve = buildSCurve(items, planned, realized, today);
     return { planPct, realPct, spi, sCurve };
-  }, [project, wbsAll, plannedAll, realizedAll]);
+  }, [project, wbsAll, plannedAll, realizedAll, today]);
 
   if (!project) {
     return (
@@ -63,7 +64,7 @@ export default function PublicViewer({ params }: { params: Promise<{ token: stri
   }
 
   const spiL = spiLevel(stats.spi);
-  const elapsed = Math.max(0, daysBetween(project.startDate, project.reportDate) + 1);
+  const elapsed = Math.max(0, daysBetween(project.startDate, today) + 1);
   const remaining = Math.max(0, project.durationDays - elapsed);
 
   return (
@@ -112,9 +113,9 @@ export default function PublicViewer({ params }: { params: Promise<{ token: stri
         </div>
 
         <Card>
-          <CardTitle>S-Eğrisi</CardTitle>
+          <CardTitle>S-Curve</CardTitle>
           {stats.sCurve.length > 0 ? (
-            <SCurveChart data={stats.sCurve} reportDate={project.reportDate} />
+            <SCurveChart data={stats.sCurve} reportDate={today} />
           ) : (
             <p className="text-sm text-text3">Henüz veri yok.</p>
           )}
@@ -125,7 +126,7 @@ export default function PublicViewer({ params }: { params: Promise<{ token: stri
           <dl className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
             <Info label="Başlangıç" value={formatDate(project.startDate)} />
             <Info label="Bitiş" value={formatDate(project.plannedEnd)} />
-            <Info label="Rapor Tarihi" value={formatDate(project.reportDate)} />
+            <Info label="Rapor Tarihi" value={formatDate(today)} />
             <Info label="Kurulu Güç" value={project.installedCapacityMw ? `${project.installedCapacityMw} MW` : "—"} />
           </dl>
         </Card>

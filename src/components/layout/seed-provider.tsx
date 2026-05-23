@@ -2,22 +2,27 @@
 
 import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
+import { isSandboxMode } from "@/lib/sandbox";
 
 /**
  * Zustand persist client-side hydrate olur. İlk yükte boşsa seed ekle.
  * Hydration tamamlanana kadar children'ı render etme — flicker'ı önler.
+ *
+ * Sandbox modunda seed YOKTUR — kullanıcı kendi yedeğini Veri Yedeği ile yükler.
  */
 export function SeedProvider({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
+    const sandbox = isSandboxMode();
+
     const unsub = useStore.persist.onFinishHydration(() => {
-      useStore.getState().seedIfEmpty();
+      if (!sandbox) useStore.getState().seedIfEmpty();
       setHydrated(true);
     });
 
     if (useStore.persist.hasHydrated()) {
-      useStore.getState().seedIfEmpty();
+      if (!sandbox) useStore.getState().seedIfEmpty();
       setHydrated(true);
     }
 
